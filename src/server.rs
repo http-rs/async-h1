@@ -1,6 +1,6 @@
 //! Process HTTP connections on the server.
 
-use async_std::io::{self, BufRead, BufReader, Read};
+use async_std::io::{self, BufRead, BufReader};
 use async_std::task::{Context, Poll};
 use futures_io::AsyncRead;
 use http::{Request, Response, Version};
@@ -11,16 +11,16 @@ use crate::{Body, Exception, MAX_HEADERS};
 
 /// A streaming HTTP encoder.
 #[derive(Debug)]
-pub struct Encoder {
+pub struct Encoder<R> {
     headers: Vec<u8>,
     headers_done: bool,
     cursor: usize,
-    body: Body,
+    body: Body<R>,
 }
 
-impl Encoder {
+impl<R: AsyncRead> Encoder<R> {
     /// Create a new instance.
-    pub(crate) fn new(headers: Vec<u8>, body: Body) -> Self {
+    pub(crate) fn new(headers: Vec<u8>, body: Body<R>) -> Self {
         Self {
             body,
             headers,
@@ -30,7 +30,7 @@ impl Encoder {
     }
 }
 
-impl AsyncRead for Encoder {
+impl<R: AsyncRead + Unpin> AsyncRead for Encoder<R> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         _cx: &mut Context<'_>,
@@ -41,7 +41,7 @@ impl AsyncRead for Encoder {
         }
         let len = std::cmp::min(self.headers.len() - self.cursor, buf.len());
         let range = self.cursor..self.cursor + len;
-        buf.copy_from_slice(&mut self.headers[range]);
+        buf[0..len].copy_from_slice(&mut self.headers[range]);
         self.cursor += len;
         if self.cursor >= self.headers.len() {
             self.headers_done = true;
@@ -52,7 +52,7 @@ impl AsyncRead for Encoder {
 
 /// Encode an HTTP request on the server.
 // TODO: return a reader in the response
-pub async fn encode(res: Response<Body>) -> Result<Encoder, std::io::Error> {
+pub async fn encode<R>(res: Response<Body<R>>) -> Result<Encoder<R>, std::io::Error> where R: AsyncRead {
     // TODO: reuse allocations.
     let mut head = Vec::new();
     let status = res.status();
@@ -75,51 +75,59 @@ pub async fn encode(res: Response<Body>) -> Result<Encoder, std::io::Error> {
 }
 
 /// Decode an HTTP request on the server.
-pub async fn decode(reader: &mut (impl AsyncRead + Unpin)) -> Result<Request<Body>, Exception> {
+pub async fn decode<R>(reader: R) -> Result<Request<Body<BufReader<R>>>, Exception>
+    where R: AsyncRead + Unpin + Send,
+{
     let mut reader = BufReader::new(reader);
-    let mut request = Vec::new();
+    let mut buf = Vec::new();
     let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
-    let mut req = httparse::Request::new(&mut headers);
+    let mut httparse_req = httparse::Request::new(&mut headers);
 
+    // Keep reading bytes from the stream until we hit the end of the stream.
     loop {
-        let bytes_read = reader.read_until(b'\n', &mut request).await?;
-        let end = request.len() - 1;
-        if bytes_read == 0 || end >= 3 && request[end - 3..=end] == [13, 10, 13, 10] {
+        let bytes_read = reader.read_until(b'\n', &mut buf).await?;
+        // No more bytes are yielded from the stream.
+        if bytes_read == 0 {
+            break;
+        }
+
+        // We've hit the end delimiter of the stream.
+        let idx = buf.len() - 1;
+        if idx >= 3 && &buf[idx - 3..=idx] == b"\r\n\r\n" {
             break;
         }
     }
-    if req.parse(&request)?.is_partial() {
-        return Err("Malformed HTTP header".into());
+
+    // Convert our header buf into an httparse instance, and validate.
+    let status = httparse_req.parse(&buf)?;
+    if status.is_partial() {
+        return Err("Malformed HTTP head".into());
     }
 
-    let _body = if let Some(header) = req.headers.iter().find(|h| h.name == "Content-Length") {
-        let mut body = Vec::new();
-        body.resize(std::str::from_utf8(&header.value)?.parse::<usize>()?, 0);
-        reader.read_exact(&mut body).await?;
-        Some(body)
-    } else {
-        None
-    };
-
-    let request = req;
+    // Convert httparse headers + body into a `http::Request` type.
     let mut req = Request::builder();
-    for header in request.headers {
+    for header in httparse_req.headers.iter() {
         req.header(header.name, header.value);
     }
-    if let Some(method) = request.method {
+    if let Some(method) = httparse_req.method {
         req.method(method);
     }
-    if let Some(path) = request.path {
+    if let Some(path) = httparse_req.path {
         req.uri(path);
     }
-    if let Some(version) = request.version {
+    if let Some(version) = httparse_req.version {
         req.version(match version {
             1 => Version::HTTP_11,
             _ => return Err("Unsupported HTTP version".into()),
         });
     }
 
-    // TODO: create a body.
-    let body = Body {};
+    // Process the body if `Content-Length` was passed.
+    let body = match httparse_req.headers.iter().find(|h| h.name == "Content-Length") {
+        Some(_header) => Body::new(reader), // TODO: use the header value
+        None => Body::empty(),
+    };
+
+    // Return the request.
     Ok(req.body(body)?)
 }

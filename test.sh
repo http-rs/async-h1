@@ -2,6 +2,6 @@
 
 set -e
 
-cargo run --example server &
+RUST_BACKTRACE=1 cargo run --example server &
 sleep 1
 curl localhost:8080

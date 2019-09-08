@@ -13,12 +13,12 @@ use crate::{Body, Exception};
 #[derive(Debug)]
 pub struct Encoder;
 
-/// Encode an HTTP request on the client.
-pub async fn encode(_res: Request<Body>) -> Result<Encoder, std::io::Error> {
-    unimplemented!();
-}
+// /// Encode an HTTP request on the client.
+// pub async fn encode(_res: Request<Body>) -> Result<Encoder, std::io::Error> {
+//     unimplemented!();
+// }
 
-/// Decode an HTTP request on the client.
-pub async fn decode(_reader: &mut (impl AsyncRead + Unpin)) -> Result<Response<Body>, Exception> {
-    unimplemented!();
-}
+// /// Decode an HTTP request on the client.
+// pub async fn decode(_reader: &mut (impl AsyncRead + Unpin)) -> Result<Response<Body>, Exception> {
+//     unimplemented!();
+// }

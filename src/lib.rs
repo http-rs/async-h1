@@ -6,14 +6,17 @@
 //! - `client` encodes HTTP requests, and decodes HTTP responses.
 //! - `server` decodes HTTP requests, and encodes HTTP responses.
 //!
+//! A client always starts the HTTP connection. The lifetime of an HTTP
+//! connection looks like this:
+//!
 //! ```txt
-//!   encode            decode
-//!        \            /
-//!        -> request  ->
-//! client                server
-//!        <- response <-
-//!        /            \
-//!   decode            encode
+//! 1. encode            2. decode
+//!         \            /
+//!         -> request  ->
+//!  client                server
+//!         <- response <-
+//!         /            \
+//! 4. decode            3. encode
 //! ```
 //!
 //! See also [`async-tls`](https://docs.rs/async-tls),
@@ -25,11 +28,9 @@
 //! // tbi
 //! ```
 
-// ref: https://github.com/hyperium/hyper/blob/b342c38f08972fe8be4ef9844e30f1e7a121bbc4/src/proto/h1/role.rs
-
 #![forbid(unsafe_code, future_incompatible, rust_2018_idioms)]
 #![deny(missing_debug_implementations, nonstandard_style)]
-#![warn(missing_docs, missing_doc_code_examples, unreachable_pub)]
+// #![warn(missing_docs, missing_doc_code_examples, unreachable_pub)]
 #![cfg_attr(test, deny(warnings))]
 
 /// The maximum amount of headers parsed on the server.
@@ -41,8 +42,8 @@ pub use check::check;
 mod body;
 mod check;
 
-pub mod server;
 pub mod client;
+pub mod server;
 
 /// A generic fallible type.
 pub type Exception = Box<dyn std::error::Error + Send + Sync + 'static>;
