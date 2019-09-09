@@ -19,6 +19,9 @@ impl<R: AsyncRead> fmt::Debug for Body<R> {
 
 impl<R: AsyncRead> Body<R> {
     /// Create a new instance from a reader.
+    ///
+    /// Because the size of a stream is not known ahead of time, we have to use
+    /// `Transfer-Encoding: Chunked`.
     pub fn new(reader: R) -> Self {
         Self {
             reader: Some(reader),
@@ -30,7 +33,7 @@ impl<R: AsyncRead> Body<R> {
     pub fn empty() -> Self {
         Self {
             reader: None,
-            length: None,
+            length: Some(0),
         }
     }
 

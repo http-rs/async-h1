@@ -9,15 +9,17 @@ fn main() -> Result<(), async_h1::Exception> {
         let mut incoming = listener.incoming();
 
         while let Some(stream) = incoming.next().await {
-            let stream = stream?;
-            let (reader, writer) = &mut (&stream, &stream);
-            let req = server::decode(reader).await?;
-            // dbg!(req);
-            let body = Body::from_string("hello chashu".to_owned());
-            let mut res = server::encode(http::Response::new(body)).await?;
-            io::copy(&mut res, writer).await?;
+            task::spawn(async move {
+                let stream = stream?;
+                let (reader, writer) = &mut (&stream, &stream);
+                let req = server::decode(reader).await?;
+                // dbg!(req);
+                let body = Body::from_string("hello chashu".to_owned());
+                let mut res = server::encode(http::Response::new(body)).await?;
+                io::copy(&mut res, writer).await?;
+                Ok::<(), async_h1::Exception>(())
+            });
         }
-
         Ok(())
     })
 }

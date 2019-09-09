@@ -19,3 +19,4 @@ async-std = "0.99.4"
 futures-core-preview = "0.3.0-alpha.18"
 
 [dev-dependencies]
+futures-util-preview = "0.3.0-alpha.18"
