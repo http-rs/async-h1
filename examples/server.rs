@@ -1,10 +1,10 @@
-use async_h1::server;
+use async_h1::{server, Body};
 use async_std::prelude::*;
 use async_std::{net, task, io};
 
 fn main() -> Result<(), async_h1::Exception> {
     task::block_on(async {
-        let listener = net::TcpListener::bind(("localhost", 8080)).await?;
+        let listener = net::TcpListener::bind(("127.0.0.1", 8080)).await?;
         println!("listening on {}", listener.local_addr()?);
         let mut incoming = listener.incoming();
 
@@ -12,9 +12,9 @@ fn main() -> Result<(), async_h1::Exception> {
             let stream = stream?;
             let (reader, writer) = &mut (&stream, &stream);
             let req = server::decode(reader).await?;
-            dbg!(req);
-            let res = http::Response::new(async_h1::Body {});
-            let mut res = server::encode(res).await?;
+            // dbg!(req);
+            let body = Body::from_string("hello chashu".to_owned());
+            let mut res = server::encode(http::Response::new(body)).await?;
             io::copy(&mut res, writer).await?;
         }
 

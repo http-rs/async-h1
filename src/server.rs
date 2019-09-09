@@ -3,6 +3,7 @@
 use async_std::io::{self, BufRead, BufReader};
 use async_std::task::{Context, Poll};
 use futures_io::AsyncRead;
+use futures_core::ready;
 use http::{Request, Response, Version};
 
 use std::pin::Pin;
@@ -10,12 +11,22 @@ use std::pin::Pin;
 use crate::{Body, Exception, MAX_HEADERS};
 
 /// A streaming HTTP encoder.
+///
+/// This is returned from [`encode`].
 #[derive(Debug)]
-pub struct Encoder<R> {
-    headers: Vec<u8>,
-    headers_done: bool,
+pub struct Encoder<R: AsyncRead> {
+    /// Keep track how far we've indexed into the headers + body.
     cursor: usize,
+    /// HTTP headers to be sent.
+    headers: Vec<u8>,
+    /// Check whether we're done sending headers.
+    headers_done: bool,
+    /// HTTP body to be sent.
     body: Body<R>,
+    /// Check whether we're done with the body.
+    body_done: bool,
+    /// Keep track of how many bytes have been read from the body stream.
+    body_bytes_read: usize,
 }
 
 impl<R: AsyncRead> Encoder<R> {
@@ -26,6 +37,8 @@ impl<R: AsyncRead> Encoder<R> {
             headers,
             cursor: 0,
             headers_done: false,
+            body_done: false,
+            body_bytes_read: 0,
         }
     }
 }
@@ -33,45 +46,63 @@ impl<R: AsyncRead> Encoder<R> {
 impl<R: AsyncRead + Unpin> AsyncRead for Encoder<R> {
     fn poll_read(
         mut self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
+        cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        if self.headers_done {
-            return Poll::Ready(Ok(0));
+        // Send the headers. As long as the headers aren't fully sent yet we
+        // keep sending more of the headers.
+        let mut bytes_read = 0;
+        if !self.headers_done {
+            let len = std::cmp::min(self.headers.len() - self.cursor, buf.len());
+            let range = self.cursor..self.cursor + len;
+            buf[0..len].copy_from_slice(&mut self.headers[range]);
+            self.cursor += len;
+            if self.cursor == self.headers.len() {
+                self.headers_done = true;
+            }
+            bytes_read += len;
         }
-        let len = std::cmp::min(self.headers.len() - self.cursor, buf.len());
-        let range = self.cursor..self.cursor + len;
-        buf[0..len].copy_from_slice(&mut self.headers[range]);
-        self.cursor += len;
-        if self.cursor >= self.headers.len() {
-            self.headers_done = true;
+
+        if !self.body_done {
+            let n = ready!(Pin::new(&mut self.body).poll_read(cx, &mut buf[bytes_read..]))?;
+            bytes_read += n;
+            self.body_bytes_read += n;
+            if bytes_read == 0 {
+                self.body_done = true;
+            }
         }
-        Poll::Ready(Ok(len as usize))
+
+        Poll::Ready(Ok(bytes_read as usize))
     }
 }
 
 /// Encode an HTTP request on the server.
 // TODO: return a reader in the response
 pub async fn encode<R>(res: Response<Body<R>>) -> Result<Encoder<R>, std::io::Error> where R: AsyncRead {
-    // TODO: reuse allocations.
-    let mut head = Vec::new();
+    use std::io::Write;
+    let mut buf: Vec<u8> = vec![];
+
+    let reason = res.status().canonical_reason().unwrap();
     let status = res.status();
-    head.extend_from_slice(b"HTTP/1.1 ");
-    head.extend_from_slice(status.as_str().as_bytes());
-    head.extend_from_slice(b" ");
-    head.extend_from_slice(status.canonical_reason().unwrap().as_bytes());
-    head.extend_from_slice(b"\r\n");
+    write!(&mut buf, "HTTP/1.1 {} {}\r\n", status.as_str(), reason)?;
+
+    // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
+    // send all items in chunks.
+    if let Some(len) = res.body().len() {
+        write!(&mut buf, "Content-Length: {}\r\n", len)?;
+    } else {
+        write!(&mut buf, "Transfer-Encoding: chunked\r\n")?;
+        panic!("chunked encoding is not implemented yet");
+        // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Transfer-Encoding
+        //      https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Trailer
+    }
 
     for (header, value) in res.headers() {
-        head.extend_from_slice(header.as_str().as_bytes());
-        head.extend_from_slice(b": ");
-        head.extend_from_slice(value.to_str().expect("Invalid header value").as_bytes());
-        head.extend_from_slice(b"\r\n");
+        write!(&mut buf, "{}: {}\r\n", header.as_str(), value.to_str().unwrap())?;
     }
-    head.extend_from_slice(b"\r\n");
 
-    // TODO: serialize body
-    Ok(Encoder::new(head, res.into_body()))
+    write!(&mut buf, "\r\n")?;
+    Ok(Encoder::new(buf, res.into_body()))
 }
 
 /// Decode an HTTP request on the server.
@@ -101,6 +132,7 @@ pub async fn decode<R>(reader: R) -> Result<Request<Body<BufReader<R>>>, Excepti
     // Convert our header buf into an httparse instance, and validate.
     let status = httparse_req.parse(&buf)?;
     if status.is_partial() {
+        dbg!(String::from_utf8(buf).unwrap());
         return Err("Malformed HTTP head".into());
     }
 
