@@ -18,6 +18,34 @@ Asynchronous HTTP 1.1 parser.
 $ cargo add async-h1
 ```
 
+## Profiling
+__build server__
+```sh
+$ cargo build --examples server --release
+```
+
+__profile script__
+```sh
+#!/bin/bash
+set -x
+perf record -F 997 -g "./target/release/examples/server"
+perf script > /tmp/out.perf
+stackcollapse-perf /tmp/out.perf > /tmp/out.folded
+
+outfile="/tmp/$(date +%F-%T)-flamegraph.svg"
+flamegraph /tmp/out.folded > "$outfile"
+# rm perf.data /tmp/out.perf /tmp/out.folded
+
+firefox "$outfile"
+```
+
+__load testing__
+Using [autocannon](https://github.com/mcollina/autocannon) do:
+
+```rust
+$ autocannon localhost:8080 -l
+```
+
 ## Safety
 This crate uses ``#![deny(unsafe_code)]`` to ensure everything is implemented in
 100% Safe Rust.
