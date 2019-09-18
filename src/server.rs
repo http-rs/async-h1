@@ -2,8 +2,8 @@
 
 use async_std::io::{self, BufRead, BufReader};
 use async_std::task::{Context, Poll};
-use futures_io::AsyncRead;
 use futures_core::ready;
+use futures_io::AsyncRead;
 use http::{Request, Response, Version};
 
 use std::pin::Pin;
@@ -78,7 +78,10 @@ impl<R: AsyncRead + Unpin> AsyncRead for Encoder<R> {
 
 /// Encode an HTTP request on the server.
 // TODO: return a reader in the response
-pub async fn encode<R>(res: Response<Body<R>>) -> Result<Encoder<R>, std::io::Error> where R: AsyncRead {
+pub async fn encode<R>(res: Response<Body<R>>) -> io::Result<Encoder<R>>
+where
+    R: AsyncRead,
+{
     use std::io::Write;
     let mut buf: Vec<u8> = vec![];
 
@@ -98,7 +101,12 @@ pub async fn encode<R>(res: Response<Body<R>>) -> Result<Encoder<R>, std::io::Er
     }
 
     for (header, value) in res.headers() {
-        write!(&mut buf, "{}: {}\r\n", header.as_str(), value.to_str().unwrap())?;
+        write!(
+            &mut buf,
+            "{}: {}\r\n",
+            header.as_str(),
+            value.to_str().unwrap()
+        )?;
     }
 
     write!(&mut buf, "\r\n")?;
@@ -106,8 +114,9 @@ pub async fn encode<R>(res: Response<Body<R>>) -> Result<Encoder<R>, std::io::Er
 }
 
 /// Decode an HTTP request on the server.
-pub async fn decode<R>(reader: R) -> Result<Request<Body<BufReader<R>>>, Exception>
-    where R: AsyncRead + Unpin + Send,
+pub async fn decode<R>(reader: R) -> Result<Option<Request<Body<BufReader<R>>>>, Exception>
+where
+    R: AsyncRead + Unpin + Send,
 {
     let mut reader = BufReader::new(reader);
     let mut buf = Vec::new();
@@ -119,7 +128,7 @@ pub async fn decode<R>(reader: R) -> Result<Request<Body<BufReader<R>>>, Excepti
         let bytes_read = reader.read_until(b'\n', &mut buf).await?;
         // No more bytes are yielded from the stream.
         if bytes_read == 0 {
-            break;
+            return Ok(None);
         }
 
         // We've hit the end delimiter of the stream.
@@ -155,11 +164,15 @@ pub async fn decode<R>(reader: R) -> Result<Request<Body<BufReader<R>>>, Excepti
     }
 
     // Process the body if `Content-Length` was passed.
-    let body = match httparse_req.headers.iter().find(|h| h.name == "Content-Length") {
+    let body = match httparse_req
+        .headers
+        .iter()
+        .find(|h| h.name == "Content-Length")
+    {
         Some(_header) => Body::new(reader), // TODO: use the header value
         None => Body::empty(),
     };
 
     // Return the request.
-    Ok(req.body(body)?)
+    Ok(Some(req.body(body)?))
 }
