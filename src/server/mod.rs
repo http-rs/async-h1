@@ -16,43 +16,49 @@ use encoder::Encoder;
 
 /// An HTTP Server
 #[derive(Debug)]
-pub struct Server<'a, R: AsyncRead + Unpin> {
+pub struct Server<R: AsyncRead + Unpin> {
     reader: BufReader<R>,
-    __marker: PhantomData<&'a ()>,
 }
 
-impl<'a, R: AsyncRead + Unpin> Server<'a, R> {
+impl<R: AsyncRead + Unpin> Server<R> {
     /// Create a new instance.
     pub fn connect(reader: R) -> Self {
         Self {
             reader: BufReader::new(reader),
-            __marker: PhantomData,
         }
-    }
-}
-
-impl<'a, 'b, R: AsyncRead + Unpin + 'a> Stream for &'b Server<'a, R>
-where
-    Self: 'a + Unpin,
-{
-    type Item = Connection<'a, R>;
-
-    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Poll::Ready(Some(Connection {
-            server: self.get_mut(),
-        }))
     }
 }
 
 /// An HTTP Connection.
 #[derive(Debug)]
-pub struct Connection<'a, R: AsyncRead + Unpin> {
-    server: &'a Server<'a, R>,
+pub struct Connection<'a, R: AsyncRead + Unpin + 'a> {
+    server: &'a mut Server<R>,
 }
+
+impl<'a, R: AsyncRead + Unpin + 'a> Iterator for &'a mut Server<R> {
+    type Item = Connection<'a, R>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(Connection { server: &mut self })
+    }
+}
+
+// impl<'a, 'b, R: AsyncRead + Unpin + 'a> Stream for &mut Server<'a, R>
+// where
+//     Self: 'a + Unpin,
+// {
+//     type Item = Connection<'a, R>;
+
+//     fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+// Poll::Ready(Some(Connection {
+//     server: *self.get_mut(),
+// }))
+//     }
+// }
 
 // impl<'a, R: AsyncRead + Unpin> Connection<'a, R> {
 //     /// Decode an HTTP request on the server.
-//     pub async fn decode(&mut self) -> Result<Option<Request<Body<&mut BufReader<R>>>>, Exception>
+//     pub async fn decode(&mut self) -> Result<Option<Request<Body<&'a mut BufReader<R>>>>, Exception>
 //     where
 //         R: AsyncRead + Unpin + Send,
 //     {
@@ -62,7 +68,7 @@ pub struct Connection<'a, R: AsyncRead + Unpin> {
 
 //         // Keep reading bytes from the stream until we hit the end of the stream.
 //         loop {
-//             let bytes_read = self.reader.read_until(b'\n', &mut buf).await?;
+//             let bytes_read = self.server.reader.read_until(b'\n', &mut buf).await?;
 //             // No more bytes are yielded from the stream.
 //             if bytes_read == 0 {
 //                 return Ok(None);
@@ -106,7 +112,7 @@ pub struct Connection<'a, R: AsyncRead + Unpin> {
 //             .iter()
 //             .find(|h| h.name == "Content-Length")
 //         {
-//             Some(_header) => Body::new(self.reader), // TODO: use the header value
+//             Some(_header) => Body::new(&mut self.server.reader), // TODO: use the header value
 //             None => Body::empty(),
 //         };
 
