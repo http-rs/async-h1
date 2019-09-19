@@ -20,3 +20,6 @@ futures-core-preview = "0.3.0-alpha.18"
 
 [dev-dependencies]
 futures-util-preview = "0.3.0-alpha.18"
+
+[patch.crates-io]
+async-std = { path = "../../async-rs/async-std" }
