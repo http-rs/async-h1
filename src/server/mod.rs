@@ -31,23 +31,23 @@ impl<'a, R: AsyncRead + Unpin> Server<'a, R> {
     }
 }
 
-impl<'a, R: AsyncRead + Unpin + 'a> Stream for Server<'a, R>
+impl<'a, 'b, R: AsyncRead + Unpin + 'a> Stream for &'b Server<'a, R>
 where
-    Self: 'a,
+    Self: 'a + Unpin,
 {
     type Item = Connection<'a, R>;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Poll::Ready(Some(Connection {
-            reader: &mut self.reader,
+            server: self.get_mut(),
         }))
     }
 }
 
 /// An HTTP Connection.
 #[derive(Debug)]
-pub struct Connection<'a, R: AsyncRead + Unpin + 'a> {
-    reader: &'a mut BufReader<R>,
+pub struct Connection<'a, R: AsyncRead + Unpin> {
+    server: &'a Server<'a, R>,
 }
 
 // impl<'a, R: AsyncRead + Unpin> Connection<'a, R> {
