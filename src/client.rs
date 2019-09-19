@@ -2,12 +2,12 @@
 
 // use async_std::io::{self, BufRead, BufReader, Read};
 // use async_std::task::{Context, Poll};
-use futures_io::AsyncRead;
-use http::{Request, Response};
+// use futures_io::AsyncRead;
+// use http::{Request, Response};
 
 // use std::pin::Pin;
 
-use crate::{Body, Exception};
+// use crate::{Body, Exception};
 
 /// An HTTP encoder.
 #[derive(Debug)]
