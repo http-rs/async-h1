@@ -16,7 +16,8 @@ httparse = "1.3.3"
 http = "0.1.17"
 futures-io-preview = "0.3.0-alpha.18"
 # async-std = "0.99.6"
-async-std = { path = "../../async-rs/async-std" }
+# async-std = { path = "../../async-rs/async-std" }
+async-std = { path = "../async-std-event-loop" }
 futures-core-preview = "0.3.0-alpha.18"
 
 [dev-dependencies]
