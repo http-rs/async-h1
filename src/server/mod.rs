@@ -3,12 +3,9 @@
 mod encoder;
 
 use async_std::io::{self, BufRead, BufReader};
-use async_std::task::{Context, Poll};
-use futures_core::Stream;
 use futures_io::AsyncRead;
 use http::{Request, Response, Version};
 
-use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::ops::DerefMut;
 
@@ -16,6 +13,10 @@ use crate::{Body, Exception, MAX_HEADERS};
 use encoder::Encoder;
 
 /// An HTTP Server
+// Note: the reason why we have to write this as an Arc<Mutex> is because Rust
+// doesn't have non-overlapping iterators yet. We *know* this is going to be
+// yielded entirely serially, but we can't prove it to Rust. Which is a bit
+// annoying for performance, but probably okay for now.
 #[derive(Debug)]
 pub struct Server<R: AsyncRead + Unpin> {
     reader: Arc<Mutex<BufReader<R>>>,
