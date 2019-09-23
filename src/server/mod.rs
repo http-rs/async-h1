@@ -8,6 +8,8 @@ use http::{Request, Response, Version};
 
 use std::sync::{Arc, Mutex};
 use std::ops::DerefMut;
+use std::task::{Context, Poll};
+use std::pin::Pin;
 
 use crate::{Body, Exception, MAX_HEADERS};
 use encoder::Encoder;
@@ -49,7 +51,7 @@ impl<R: AsyncRead + Unpin> Iterator for Server<R> {
 
 impl<R: AsyncRead + Unpin> Connection<R> {
     /// Decode an HTTP request on the server.
-    pub async fn decode(&mut self) -> Result<Option<Request<Body<&mut BufReader<R>>>>, Exception>
+    pub async fn decode(&mut self) -> Result<Option<Request<Body<BodyReader<R>>>>, Exception>
     where
         R: AsyncRead + Unpin + Send,
     {
@@ -103,7 +105,7 @@ impl<R: AsyncRead + Unpin> Connection<R> {
             .iter()
             .find(|h| h.name == "Content-Length")
         {
-            Some(_header) => Body::new(self.reader.lock().unwrap().deref_mut()), // TODO: use the header value
+            Some(_header) => Body::new(BodyReader { reader: self.reader.clone() }), // TODO: use the header value
             None => Body::empty(),
         };
 
@@ -146,5 +148,17 @@ impl<R: AsyncRead + Unpin> Connection<R> {
 
         write!(&mut buf, "\r\n")?;
         Ok(Encoder::new(buf, res.into_body()))
+    }
+}
+
+/// The reader that's passed to the body.
+#[derive(Debug)]
+pub struct BodyReader<R: AsyncRead + Unpin> {
+    reader: Arc<Mutex<BufReader<R>>>,
+}
+
+impl<R: AsyncRead + Unpin> AsyncRead for BodyReader<R> {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+        panic!();
     }
 }
