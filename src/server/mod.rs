@@ -10,6 +10,7 @@ use http::{Request, Response, Version};
 
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::ops::DerefMut;
 
 use crate::{Body, Exception, MAX_HEADERS};
 use encoder::Encoder;
@@ -45,22 +46,9 @@ impl<R: AsyncRead + Unpin> Iterator for Server<R> {
     }
 }
 
-impl<R: AsyncRead + Unpin> Stream for &mut Server<R>
-where
-    Self: Unpin,
-{
-    type Item = Connection<R>;
-
-    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-Poll::Ready(Some(Connection {
-    server: *self.get_mut(),
-}))
-    }
-}
-
 impl<R: AsyncRead + Unpin> Connection<R> {
     /// Decode an HTTP request on the server.
-    pub async fn decode(&mut self) -> Result<Option<Request<Body<BufReader<R>>>>, Exception>
+    pub async fn decode(&mut self) -> Result<Option<Request<Body<&mut BufReader<R>>>>, Exception>
     where
         R: AsyncRead + Unpin + Send,
     {
@@ -114,7 +102,7 @@ impl<R: AsyncRead + Unpin> Connection<R> {
             .iter()
             .find(|h| h.name == "Content-Length")
         {
-            Some(_header) => Body::new(&mut self.reader), // TODO: use the header value
+            Some(_header) => Body::new(self.reader.lock().unwrap().deref_mut()), // TODO: use the header value
             None => Body::empty(),
         };
 
