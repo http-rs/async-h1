@@ -7,7 +7,6 @@ use futures_io::AsyncRead;
 use http::{Request, Response, Version};
 
 use std::sync::{Arc, Mutex};
-use std::ops::DerefMut;
 use std::task::{Context, Poll};
 use std::pin::Pin;
 
@@ -152,13 +151,14 @@ impl<R: AsyncRead + Unpin> Connection<R> {
 }
 
 /// The reader that's passed to the body.
+// TODO: impl `BufRead` to forward to the body.
 #[derive(Debug)]
 pub struct BodyReader<R: AsyncRead + Unpin> {
     reader: Arc<Mutex<BufReader<R>>>,
 }
 
 impl<R: AsyncRead + Unpin> AsyncRead for BodyReader<R> {
-    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
-        panic!();
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+        Pin::new(&mut *self.reader.lock().unwrap()).poll_read(cx, buf)
     }
 }
