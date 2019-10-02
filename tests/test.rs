@@ -4,7 +4,7 @@ use std::error::Error;
 fn server() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     use async_h1::server;
     use async_std::prelude::*;
-    use async_std::{net, task, io};
+    use async_std::{io, net, task};
 
     task::block_on(async {
         let server = task::spawn(async {
@@ -17,7 +17,8 @@ fn server() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
                 let (reader, writer) = &mut (&stream, &stream);
                 let req = server::decode(reader).await?;
                 dbg!(req);
-                let res = http::Response::new(async_h1::Body {});
+                let body: async_h1::Body<&[u8]> = async_h1::Body::empty();
+                let res = http::Response::new(body);
                 let mut res = server::encode(res).await?;
                 io::copy(&mut res, writer).await?;
             }

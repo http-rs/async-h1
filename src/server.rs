@@ -1,6 +1,7 @@
 //! Process HTTP connections on the server.
 
-use async_std::io::{self, BufRead, BufReader};
+use async_std::io::{self, BufReader};
+use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
 use futures_io::AsyncRead;
