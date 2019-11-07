@@ -13,7 +13,9 @@ pub struct Body<R: AsyncRead> {
 
 impl<R: AsyncRead> fmt::Debug for Body<R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Body").finish()
+        f.debug_struct("Body")
+            .field("length", &self.length)
+            .finish()
     }
 }
 

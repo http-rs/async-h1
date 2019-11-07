@@ -56,14 +56,14 @@ pub async fn encode<R: AsyncRead>(req: Request<Body<R>>) -> Result<Encoder<R>, s
 
     // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
     // send all items in chunks.
-    // if let Some(len) = res.body().len() {
-    //     write!(&mut buf, "Content-Length: {}\r\n", len)?;
-    // } else {
-    //     write!(&mut buf, "Transfer-Encoding: chunked\r\n")?;
-    //     panic!("chunked encoding is not implemented yet");
-    //     // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Transfer-Encoding
-    //     //      https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Trailer
-    // }
+    if let Some(len) = req.body().len() {
+        write!(&mut buf, "Content-Length: {}\r\n", len)?;
+    } else {
+        // write!(&mut buf, "Transfer-Encoding: chunked\r\n")?;
+        panic!("chunked encoding is not implemented yet");
+        // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Transfer-Encoding
+        //      https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Trailer
+    }
 
     for (header, value) in req.headers() {
         write!(
@@ -88,7 +88,7 @@ where
     let mut reader = BufReader::new(reader);
     let mut buf = Vec::new();
     let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
-    let mut httparse_resp = httparse::Response::new(&mut headers);
+    let mut httparse_res = httparse::Response::new(&mut headers);
 
     // Keep reading bytes from the stream until we hit the end of the stream.
     loop {
@@ -106,26 +106,26 @@ where
     }
 
     // Convert our header buf into an httparse instance, and validate.
-    let status = httparse_resp.parse(&buf)?;
+    let status = httparse_res.parse(&buf)?;
     if status.is_partial() {
         dbg!(String::from_utf8(buf).unwrap());
         return Err("Malformed HTTP head".into());
     }
 
     // Convert httparse headers + body into a `http::Response` type.
-    let mut resp = Response::builder();
-    for header in httparse_resp.headers.iter() {
-        resp.header(header.name, header.value);
+    let mut res = Response::builder();
+    for header in httparse_res.headers.iter() {
+        res.header(header.name, header.value);
     }
-    if let Some(version) = httparse_resp.version {
-        resp.version(match version {
+    if let Some(version) = httparse_res.version {
+        res.version(match version {
             1 => Version::HTTP_11,
             _ => return Err("Unsupported HTTP version".into()),
         });
     }
 
     // Process the body if `Content-Length` was passed.
-    let body = match httparse_resp
+    let body = match httparse_res
         .headers
         .iter()
         .find(|h| h.name == "Content-Length")
@@ -135,7 +135,7 @@ where
     };
 
     // Return the response.
-    Ok(resp.body(body)?)
+    Ok(res.body(body)?)
 }
 
 impl <R: AsyncRead + Unpin> AsyncRead for Encoder<R> {
