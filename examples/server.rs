@@ -14,7 +14,6 @@ fn main() -> Result<(), async_h1::Exception> {
                 let (reader, writer) = &mut (&stream, &stream);
                 let req = server::decode(reader).await?;
                 if req.is_some() {
-                    // dbg!(req);
                     let body = Body::from_string("hello chashu".to_owned());
                     let mut res = server::encode(http::Response::new(body)).await?;
                     io::copy(&mut res, writer).await?;
