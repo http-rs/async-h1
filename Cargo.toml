@@ -15,7 +15,7 @@ edition = "2018"
 httparse = "1.3.3"
 http = "0.1.17"
 futures-io = "0.3.0"
-async-std = "0.99.12"
+async-std = { version = "0.99.12", features = ["unstable"] }
 futures-core-preview = "0.3.0-alpha.18"
 
 [dev-dependencies]

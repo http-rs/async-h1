@@ -1,10 +1,10 @@
 //! Process HTTP connections on the server.
 
-use async_std::future::{timeout, Future};
+use async_std::future::Future;
 use async_std::io::{self, BufReader};
 use async_std::io::{Read, Write};
 use async_std::prelude::*;
-use async_std::task::{Context, Poll};
+use async_std::task::{sleep, Context, Poll};
 use futures_core::ready;
 use http::{Request, Response, Version};
 
@@ -34,7 +34,6 @@ where
                 let reader = res.body.into_reader().unwrap();
                 let decoder = Decoder::new(reader);
                 match decoder.decode().await? {
-                    // TODO: no unwrap
                     Some(r) => req = r,
                     None => break,
                 }
@@ -42,6 +41,13 @@ where
 
             Ok::<(), Exception>(())
         };
+
+        let timer = async {
+            sleep(std::time::Duration::from_secs(5)).await;
+            Ok::<(), Exception>(())
+        };
+
+        handle.race(timer).await?;
     }
 
     Ok(())
