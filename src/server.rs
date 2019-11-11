@@ -83,19 +83,18 @@ pub async fn encode<R>(res: Response<Body<R>>) -> io::Result<Encoder<R>>
 where
     R: AsyncRead,
 {
-    use std::io::Write;
     let mut buf: Vec<u8> = vec![];
 
     let reason = res.status().canonical_reason().unwrap();
     let status = res.status();
-    write!(&mut buf, "HTTP/1.1 {} {}\r\n", status.as_str(), reason)?;
+    write!(&mut buf, "HTTP/1.1 {} {}\r\n", status.as_str(), reason).await?;
 
     // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
     // send all items in chunks.
     if let Some(len) = res.body().len() {
-        write!(&mut buf, "Content-Length: {}\r\n", len)?;
+        write!(&mut buf, "Content-Length: {}\r\n", len).await?;
     } else {
-        write!(&mut buf, "Transfer-Encoding: chunked\r\n")?;
+        write!(&mut buf, "Transfer-Encoding: chunked\r\n").await?;
         panic!("chunked encoding is not implemented yet");
         // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Transfer-Encoding
         //      https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Trailer
@@ -107,10 +106,11 @@ where
             "{}: {}\r\n",
             header.as_str(),
             value.to_str().unwrap()
-        )?;
+        )
+        .await?;
     }
 
-    write!(&mut buf, "\r\n")?;
+    write!(&mut buf, "\r\n").await?;
     Ok(Encoder::new(buf, res.into_body()))
 }
 
