@@ -64,7 +64,6 @@ pub async fn encode<R: AsyncRead>(req: Request<Body<R>>) -> Result<Encoder<R>, s
         // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Transfer-Encoding
         //      https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Trailer
     }
-
     for (header, value) in req.headers() {
         write!(
             &mut buf,

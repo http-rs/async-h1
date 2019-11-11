@@ -49,6 +49,12 @@ impl<R: AsyncRead> Body<R> {
     }
 }
 
+impl<R: AsyncRead + Unpin> Body<R> {
+    pub fn into_reader(self) -> Option<R> {
+        self.reader
+    }
+}
+
 impl Body<io::Cursor<Vec<u8>>> {
     /// Create a new instance from a string.
     #[inline]
