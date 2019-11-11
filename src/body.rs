@@ -1,8 +1,8 @@
 use async_std::task::{Context, Poll};
 use futures_io::AsyncRead;
 
+use async_std::io::{self, Cursor};
 use std::fmt;
-use std::io::{self, Cursor};
 use std::pin::Pin;
 
 /// A streaming HTTP body.

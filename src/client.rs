@@ -1,10 +1,10 @@
 //! Process HTTP connections on the client.
 
 use async_std::io::{self, BufReader};
-use async_std::task::{Context, Poll};
 use async_std::prelude::*;
-use futures_io::AsyncRead;
+use async_std::task::{Context, Poll};
 use futures_core::ready;
+use futures_io::AsyncRead;
 use http::{Request, Response, Version};
 
 use std::pin::Pin;
@@ -28,7 +28,7 @@ pub struct Encoder<R: AsyncRead> {
     body_bytes_read: usize,
 }
 
-impl <R: AsyncRead> Encoder<R> {
+impl<R: AsyncRead> Encoder<R> {
     /// Create a new instance.
     pub(crate) fn new(headers: Vec<u8>, body: Body<R>) -> Self {
         Self {
@@ -44,20 +44,20 @@ impl <R: AsyncRead> Encoder<R> {
 
 /// Encode an HTTP request on the client.
 pub async fn encode<R: AsyncRead>(req: Request<Body<R>>) -> Result<Encoder<R>, std::io::Error> {
-    use std::io::Write;
     let mut buf: Vec<u8> = vec![];
 
     write!(
         &mut buf,
         "{} {} HTTP/1.1\r\n",
         req.method().as_str(),
-        req.uri()
-    )?;
+        req.uri(),
+    )
+    .await?;
 
     // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
     // send all items in chunks.
     if let Some(len) = req.body().len() {
-        write!(&mut buf, "Content-Length: {}\r\n", len)?;
+        write!(&mut buf, "Content-Length: {}\r\n", len).await?;
     } else {
         // write!(&mut buf, "Transfer-Encoding: chunked\r\n")?;
         panic!("chunked encoding is not implemented yet");
@@ -71,17 +71,16 @@ pub async fn encode<R: AsyncRead>(req: Request<Body<R>>) -> Result<Encoder<R>, s
             "{}: {}\r\n",
             header.as_str(),
             value.to_str().unwrap()
-        )?;
+        )
+        .await?;
     }
 
-    write!(&mut buf, "\r\n")?;
+    write!(&mut buf, "\r\n").await?;
     Ok(Encoder::new(buf, req.into_body()))
 }
 
 /// Decode an HTTP respons on the client.
-pub async fn decode<R>(
-    reader: R,
-) -> Result<Response<Body<BufReader<R>>>, Exception>
+pub async fn decode<R>(reader: R) -> Result<Response<Body<BufReader<R>>>, Exception>
 where
     R: AsyncRead + Unpin + Send,
 {
@@ -138,7 +137,7 @@ where
     Ok(res.body(body)?)
 }
 
-impl <R: AsyncRead + Unpin> AsyncRead for Encoder<R> {
+impl<R: AsyncRead + Unpin> AsyncRead for Encoder<R> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
