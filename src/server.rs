@@ -4,9 +4,10 @@ use async_std::future::Future;
 use async_std::io::{self, BufReader};
 use async_std::io::{Read, Write};
 use async_std::prelude::*;
-use async_std::task::{sleep, Context, Poll};
+use async_std::task::{Context, Poll};
 use futures_core::ready;
 use http::{Request, Response, Version};
+use std::time::{Duration, Instant};
 
 use std::pin::Pin;
 
@@ -20,34 +21,43 @@ pub async fn connect<'a, F, Fut, B>(
 where
     F: Fn(&mut Request<Body<BufReader<&'a mut B>>>) -> Fut,
     Fut: Future<Output = Result<Response<Body<&'a mut B>>, Exception>>,
-    B: Read + Write + Unpin + Send + 'static,
+    B: Read + Write + Unpin + Send,
 {
-    let decoder = Decoder::new(reader);
-    let req = decoder.decode().await?;
-    if let Some(mut req) = req {
-        // TODO: parse Keep Alive header
-
-        let handle = async {
-            loop {
-                let mut res = encode(callback(&mut req).await?).await.unwrap();
-                io::copy(&mut res, writer).await?;
-                let reader = res.body.into_reader().unwrap();
-                let decoder = Decoder::new(reader);
-                match decoder.decode().await? {
-                    Some(r) => req = r,
-                    None => break,
-                }
+    let req = decode(reader).await?;
+    if let OptionalRequest::Request(mut req) = req {
+        let headers = req.headers();
+        let timeout = match (headers.get("Connection"), headers.get("Keep-Alive")) {
+            (Some(connection), Some(_v))
+                if connection == http::header::HeaderValue::from_static("Keep-Alive") =>
+            {
+                // TODO: parse timeout
+                Duration::from_secs(5)
             }
-
-            Ok::<(), Exception>(())
+            _ => Duration::from_secs(5),
         };
 
-        let timer = async {
-            sleep(std::time::Duration::from_secs(5)).await;
-            Ok::<(), Exception>(())
-        };
-
-        handle.race(timer).await?;
+        let beginning = Instant::now();
+        loop {
+            println!("Handling request");
+            let mut res = encode(callback(&mut req).await?).await.unwrap();
+            io::copy(&mut res, writer).await?;
+            let mut stream = res.body.into_reader().unwrap();
+            req = loop {
+                match decode(stream).await? {
+                    OptionalRequest::Request(r) => {
+                        break r;
+                    }
+                    OptionalRequest::Stream(r) => {
+                        let now = Instant::now();
+                        if now - beginning > timeout {
+                            return Ok(());
+                        } else {
+                            stream = r;
+                        }
+                    }
+                }
+            };
+        }
     }
 
     Ok(())
@@ -123,110 +133,105 @@ impl<R: Read + Unpin> Read for Encoder<R> {
 // TODO: return a reader in the response
 pub async fn encode<R>(res: Response<Body<R>>) -> io::Result<Encoder<R>>
 where
-    R: Read,
+    R: Read + Send,
 {
     let mut buf: Vec<u8> = vec![];
 
     let reason = res.status().canonical_reason().unwrap();
     let status = res.status();
-    write!(&mut buf, "HTTP/1.1 {} {}\r\n", status.as_str(), reason).await?;
+    std::io::Write::write_fmt(
+        &mut buf,
+        format_args!("HTTP/1.1 {} {}\r\n", status.as_str(), reason),
+    )?;
 
     // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
     // send all items in chunks.
     if let Some(len) = res.body().len() {
-        write!(&mut buf, "Content-Length: {}\r\n", len).await?;
+        std::io::Write::write_fmt(&mut buf, format_args!("Content-Length: {}\r\n", len))?;
     } else {
-        write!(&mut buf, "Transfer-Encoding: chunked\r\n").await?;
+        std::io::Write::write_fmt(&mut buf, format_args!("Transfer-Encoding: chunked\r\n"))?;
         panic!("chunked encoding is not implemented yet");
         // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Transfer-Encoding
         //      https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Trailer
     }
 
     for (header, value) in res.headers() {
-        write!(
+        std::io::Write::write_fmt(
             &mut buf,
-            "{}: {}\r\n",
-            header.as_str(),
-            value.to_str().unwrap()
-        )
-        .await?;
+            format_args!("{}: {}\r\n", header.as_str(), value.to_str().unwrap()),
+        )?
     }
 
-    write!(&mut buf, "\r\n").await?;
+    std::io::Write::write_fmt(&mut buf, format_args!("\r\n"))?;
     Ok(Encoder::new(buf, res.into_body()))
 }
 
-struct Decoder<R> {
-    reader: BufReader<R>,
+#[derive(Debug)]
+pub enum OptionalRequest<R: Read> {
+    Request(Request<Body<BufReader<R>>>),
+    Stream(R),
 }
 
-impl<R: Read + Unpin + Send> Decoder<R> {
-    fn new(reader: R) -> Self {
-        Decoder {
-            reader: BufReader::new(reader),
+/// Decode an HTTP request on the server.
+pub async fn decode<R>(reader: R) -> Result<OptionalRequest<R>, Exception>
+where
+    R: Read + Unpin + Send,
+{
+    let mut reader = BufReader::new(reader);
+    let mut buf = Vec::new();
+    let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
+    let mut httparse_req = httparse::Request::new(&mut headers);
+
+    // Keep reading bytes from the stream until we hit the end of the stream.
+    loop {
+        let bytes_read = reader.read_until(b'\n', &mut buf).await?;
+        // No more bytes are yielded from the stream.
+        if bytes_read == 0 {
+            return Ok(OptionalRequest::Stream(reader.into_inner()));
+        }
+
+        // We've hit the end delimiter of the stream.
+        let idx = buf.len() - 1;
+        if idx >= 3 && &buf[idx - 3..=idx] == b"\r\n\r\n" {
+            break;
         }
     }
 
-    /// Decode an HTTP request on the server.
-    pub async fn decode(mut self) -> Result<Option<Request<Body<BufReader<R>>>>, Exception>
-    where
-        R: Read + Unpin + Send,
+    // Convert our header buf into an httparse instance, and validate.
+    let status = httparse_req.parse(&buf)?;
+    if status.is_partial() {
+        dbg!(String::from_utf8(buf).unwrap());
+        return Err("Malformed HTTP head".into());
+    }
+
+    // Convert httparse headers + body into a `http::Request` type.
+    let mut req = Request::builder();
+    for header in httparse_req.headers.iter() {
+        req.header(header.name, header.value);
+    }
+    if let Some(method) = httparse_req.method {
+        req.method(method);
+    }
+    if let Some(path) = httparse_req.path {
+        req.uri(path);
+    }
+    if let Some(version) = httparse_req.version {
+        req.version(match version {
+            1 => Version::HTTP_11,
+            _ => return Err("Unsupported HTTP version".into()),
+        });
+    }
+
+    // Process the body if `Content-Length` was passed.
+    let body = match httparse_req
+        .headers
+        .iter()
+        .find(|h| h.name == "Content-Length")
     {
-        let mut buf = Vec::new();
-        let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
-        let mut httparse_req = httparse::Request::new(&mut headers);
+        Some(_header) => Body::new(reader), // TODO: use the header value
+        None => Body::empty(),
+    };
 
-        // Keep reading bytes from the stream until we hit the end of the stream.
-        loop {
-            let bytes_read = self.reader.read_until(b'\n', &mut buf).await?;
-            // No more bytes are yielded from the stream.
-            if bytes_read == 0 {
-                return Ok(None);
-            }
-
-            // We've hit the end delimiter of the stream.
-            let idx = buf.len() - 1;
-            if idx >= 3 && &buf[idx - 3..=idx] == b"\r\n\r\n" {
-                break;
-            }
-        }
-
-        // Convert our header buf into an httparse instance, and validate.
-        let status = httparse_req.parse(&buf)?;
-        if status.is_partial() {
-            dbg!(String::from_utf8(buf).unwrap());
-            return Err("Malformed HTTP head".into());
-        }
-
-        // Convert httparse headers + body into a `http::Request` type.
-        let mut req = Request::builder();
-        for header in httparse_req.headers.iter() {
-            req.header(header.name, header.value);
-        }
-        if let Some(method) = httparse_req.method {
-            req.method(method);
-        }
-        if let Some(path) = httparse_req.path {
-            req.uri(path);
-        }
-        if let Some(version) = httparse_req.version {
-            req.version(match version {
-                1 => Version::HTTP_11,
-                _ => return Err("Unsupported HTTP version".into()),
-            });
-        }
-
-        // Process the body if `Content-Length` was passed.
-        let body = match httparse_req
-            .headers
-            .iter()
-            .find(|h| h.name == "Content-Length")
-        {
-            Some(_header) => Body::new(self.reader), // TODO: use the header value
-            None => Body::empty(),
-        };
-
-        // Return the request.
-        Ok(Some(req.body(body)?))
-    }
+    // Return the request.
+    Ok(OptionalRequest::Request(req.body(body)?))
 }
