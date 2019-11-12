@@ -17,9 +17,8 @@ fn server() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
                 let (reader, writer) = &mut (&stream, &stream);
                 let req = server::decode(reader).await?;
                 dbg!(req);
-                let body: async_h1::Body<&[u8]> = async_h1::Body::empty();
-                let res = http::Response::new(body);
-                let mut res = server::encode(res).await?;
+                let body: async_h1::Body<&[u8]> = async_h1::Body::empty(&[]);
+                let mut res = server::encode(http::Response::new(body)).await?;
                 io::copy(&mut res, writer).await?;
             }
 

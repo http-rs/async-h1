@@ -1,21 +1,72 @@
 //! Process HTTP connections on the server.
 
+use async_std::future::Future;
 use async_std::io::{self, BufReader};
+use async_std::io::{Read, Write};
 use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
-use futures_io::AsyncRead;
 use http::{Request, Response, Version};
+use std::time::{Duration, Instant};
 
 use std::pin::Pin;
 
 use crate::{Body, Exception, MAX_HEADERS};
 
+pub async fn connect<'a, F, Fut, R, W, O: 'a>(
+    reader: &'a mut R,
+    writer: &'a mut W,
+    callback: F,
+) -> Result<(), Exception>
+where
+    R: Read + Unpin + Send,
+    W: Write + Unpin,
+    F: Fn(&mut Request<Body<BufReader<&'a mut R>>>) -> Fut,
+    Fut: Future<Output = Result<Response<Body<O>>, Exception>>,
+    O: Read + Unpin + Send,
+{
+    let req = decode(reader).await?;
+    if let RequestOrReader::Request(mut req) = req {
+        let headers = req.headers();
+        let timeout = match (headers.get("Connection"), headers.get("Keep-Alive")) {
+            (Some(connection), Some(_v))
+                if connection == http::header::HeaderValue::from_static("Keep-Alive") =>
+            {
+                // TODO: parse timeout
+                Duration::from_secs(5)
+            }
+            _ => Duration::from_secs(5),
+        };
+
+        let beginning = Instant::now();
+        loop {
+            // TODO: what to do when the callback returns Err
+            let mut res = encode(callback(&mut req).await?).await?;
+            io::copy(&mut res, writer).await?;
+            let mut stream = req.into_body().into_reader().into_inner();
+            req = loop {
+                match decode(stream).await? {
+                    RequestOrReader::Request(r) => break r,
+                    RequestOrReader::Reader(r) => {
+                        let now = Instant::now();
+                        if now - beginning > timeout {
+                            return Ok(());
+                        }
+                        stream = r;
+                    }
+                }
+            };
+        }
+    }
+
+    Ok(())
+}
+
 /// A streaming HTTP encoder.
 ///
 /// This is returned from [`encode`].
 #[derive(Debug)]
-pub struct Encoder<R: AsyncRead> {
+pub struct Encoder<R: Read> {
     /// Keep track how far we've indexed into the headers + body.
     cursor: usize,
     /// HTTP headers to be sent.
@@ -30,7 +81,7 @@ pub struct Encoder<R: AsyncRead> {
     body_bytes_read: usize,
 }
 
-impl<R: AsyncRead> Encoder<R> {
+impl<R: Read> Encoder<R> {
     /// Create a new instance.
     pub(crate) fn new(headers: Vec<u8>, body: Body<R>) -> Self {
         Self {
@@ -44,7 +95,7 @@ impl<R: AsyncRead> Encoder<R> {
     }
 }
 
-impl<R: AsyncRead + Unpin> AsyncRead for Encoder<R> {
+impl<R: Read + Unpin> Read for Encoder<R> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -81,43 +132,49 @@ impl<R: AsyncRead + Unpin> AsyncRead for Encoder<R> {
 // TODO: return a reader in the response
 pub async fn encode<R>(res: Response<Body<R>>) -> io::Result<Encoder<R>>
 where
-    R: AsyncRead,
+    R: Read + Send,
 {
     let mut buf: Vec<u8> = vec![];
 
     let reason = res.status().canonical_reason().unwrap();
     let status = res.status();
-    write!(&mut buf, "HTTP/1.1 {} {}\r\n", status.as_str(), reason).await?;
+    std::io::Write::write_fmt(
+        &mut buf,
+        format_args!("HTTP/1.1 {} {}\r\n", status.as_str(), reason),
+    )?;
 
     // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
     // send all items in chunks.
     if let Some(len) = res.body().len() {
-        write!(&mut buf, "Content-Length: {}\r\n", len).await?;
+        std::io::Write::write_fmt(&mut buf, format_args!("Content-Length: {}\r\n", len))?;
     } else {
-        write!(&mut buf, "Transfer-Encoding: chunked\r\n").await?;
+        std::io::Write::write_fmt(&mut buf, format_args!("Transfer-Encoding: chunked\r\n"))?;
         panic!("chunked encoding is not implemented yet");
         // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Transfer-Encoding
         //      https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Trailer
     }
 
     for (header, value) in res.headers() {
-        write!(
+        std::io::Write::write_fmt(
             &mut buf,
-            "{}: {}\r\n",
-            header.as_str(),
-            value.to_str().unwrap()
-        )
-        .await?;
+            format_args!("{}: {}\r\n", header.as_str(), value.to_str().unwrap()),
+        )?
     }
 
-    write!(&mut buf, "\r\n").await?;
+    std::io::Write::write_fmt(&mut buf, format_args!("\r\n"))?;
     Ok(Encoder::new(buf, res.into_body()))
 }
 
+#[derive(Debug)]
+pub enum RequestOrReader<R: Read> {
+    Request(Request<Body<BufReader<R>>>),
+    Reader(R),
+}
+
 /// Decode an HTTP request on the server.
-pub async fn decode<R>(reader: R) -> Result<Option<Request<Body<BufReader<R>>>>, Exception>
+pub async fn decode<R>(reader: R) -> Result<RequestOrReader<R>, Exception>
 where
-    R: AsyncRead + Unpin + Send,
+    R: Read + Unpin + Send,
 {
     let mut reader = BufReader::new(reader);
     let mut buf = Vec::new();
@@ -129,7 +186,7 @@ where
         let bytes_read = reader.read_until(b'\n', &mut buf).await?;
         // No more bytes are yielded from the stream.
         if bytes_read == 0 {
-            return Ok(None);
+            return Ok(RequestOrReader::Reader(reader.into_inner()));
         }
 
         // We've hit the end delimiter of the stream.
@@ -171,9 +228,9 @@ where
         .find(|h| h.name == "Content-Length")
     {
         Some(_header) => Body::new(reader), // TODO: use the header value
-        None => Body::empty(),
+        None => Body::empty(reader),
     };
 
     // Return the request.
-    Ok(Some(req.body(body)?))
+    Ok(RequestOrReader::Request(req.body(body)?))
 }
