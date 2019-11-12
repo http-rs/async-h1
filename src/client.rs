@@ -129,7 +129,7 @@ where
         .find(|h| h.name == "Content-Length")
     {
         Some(_header) => Body::new(reader), // TODO: use the header value
-        None => Body::empty(),
+        None => Body::empty(reader),
     };
 
     // Return the response.

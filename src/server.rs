@@ -13,18 +13,20 @@ use std::pin::Pin;
 
 use crate::{Body, Exception, MAX_HEADERS};
 
-pub async fn connect<'a, F, Fut, B>(
-    reader: &'a mut B,
-    writer: &'a mut B,
+pub async fn connect<'a, F, Fut, R, W, O: 'a>(
+    reader: &'a mut R,
+    writer: &'a mut W,
     callback: F,
 ) -> Result<(), Exception>
 where
-    F: Fn(&mut Request<Body<BufReader<&'a mut B>>>) -> Fut,
-    Fut: Future<Output = Result<Response<Body<&'a mut B>>, Exception>>,
-    B: Read + Write + Unpin + Send,
+    R: Read + Unpin + Send,
+    W: Write + Unpin,
+    F: Fn(&mut Request<Body<BufReader<&'a mut R>>>) -> Fut,
+    Fut: Future<Output = Result<Response<Body<O>>, Exception>>,
+    O: Read + Unpin + Send,
 {
     let req = decode(reader).await?;
-    if let OptionalRequest::Request(mut req) = req {
+    if let RequestOrReader::Request(mut req) = req {
         let headers = req.headers();
         let timeout = match (headers.get("Connection"), headers.get("Keep-Alive")) {
             (Some(connection), Some(_v))
@@ -38,22 +40,19 @@ where
 
         let beginning = Instant::now();
         loop {
-            println!("Handling request");
-            let mut res = encode(callback(&mut req).await?).await.unwrap();
+            // TODO: what to do when the callback returns Err
+            let mut res = encode(callback(&mut req).await?).await?;
             io::copy(&mut res, writer).await?;
-            let mut stream = res.body.into_reader().unwrap();
+            let mut stream = req.into_body().into_reader().into_inner();
             req = loop {
                 match decode(stream).await? {
-                    OptionalRequest::Request(r) => {
-                        break r;
-                    }
-                    OptionalRequest::Stream(r) => {
+                    RequestOrReader::Request(r) => break r,
+                    RequestOrReader::Reader(r) => {
                         let now = Instant::now();
                         if now - beginning > timeout {
                             return Ok(());
-                        } else {
-                            stream = r;
                         }
+                        stream = r;
                     }
                 }
             };
@@ -167,13 +166,13 @@ where
 }
 
 #[derive(Debug)]
-pub enum OptionalRequest<R: Read> {
+pub enum RequestOrReader<R: Read> {
     Request(Request<Body<BufReader<R>>>),
-    Stream(R),
+    Reader(R),
 }
 
 /// Decode an HTTP request on the server.
-pub async fn decode<R>(reader: R) -> Result<OptionalRequest<R>, Exception>
+pub async fn decode<R>(reader: R) -> Result<RequestOrReader<R>, Exception>
 where
     R: Read + Unpin + Send,
 {
@@ -187,7 +186,7 @@ where
         let bytes_read = reader.read_until(b'\n', &mut buf).await?;
         // No more bytes are yielded from the stream.
         if bytes_read == 0 {
-            return Ok(OptionalRequest::Stream(reader.into_inner()));
+            return Ok(RequestOrReader::Reader(reader.into_inner()));
         }
 
         // We've hit the end delimiter of the stream.
@@ -229,9 +228,9 @@ where
         .find(|h| h.name == "Content-Length")
     {
         Some(_header) => Body::new(reader), // TODO: use the header value
-        None => Body::empty(),
+        None => Body::empty(reader),
     };
 
     // Return the request.
-    Ok(OptionalRequest::Request(req.body(body)?))
+    Ok(RequestOrReader::Request(req.body(body)?))
 }
