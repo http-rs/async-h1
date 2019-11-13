@@ -25,20 +25,19 @@ where
     Fut: Future<Output = Result<Response<Body<O>>, Exception>>,
     O: Read + Unpin + Send,
 {
-    let req = decode(reader).await?;
-    if let Some(mut req) = req {
-        let headers = req.headers();
-        let timeout_duration = match (headers.get("Connection"), headers.get("Keep-Alive")) {
-            (Some(connection), Some(_v))
-                if connection == http::header::HeaderValue::from_static("Keep-Alive") =>
-            {
-                // TODO: parse timeout
-                Duration::from_secs(10)
-            }
-            _ => Duration::from_secs(10),
-        };
+    // TODO: make configurable
+    let timeout_duration = Duration::from_secs(10);
+    const MAX_REQUESTS: usize = 200;
 
+    let req = decode(reader).await?;
+    let mut num_requests = 0;
+    if let Some(mut req) = req {
         loop {
+            num_requests += 1;
+            if num_requests > MAX_REQUESTS {
+                return Ok(());
+            }
+
             // TODO: what to do when the callback returns Err
             let mut res = encode(callback(&mut req).await?).await?;
             io::copy(&mut res, writer).await?;
