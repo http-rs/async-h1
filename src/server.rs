@@ -1,13 +1,13 @@
 //! Process HTTP connections on the server.
 
-use async_std::future::Future;
+use async_std::future::{timeout, Future, TimeoutError};
 use async_std::io::{self, BufReader};
 use async_std::io::{Read, Write};
 use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
 use http::{Request, Response, Version};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use std::pin::Pin;
 
@@ -25,36 +25,27 @@ where
     Fut: Future<Output = Result<Response<Body<O>>, Exception>>,
     O: Read + Unpin + Send,
 {
-    let req = decode(reader).await?;
-    if let RequestOrReader::Request(mut req) = req {
-        let headers = req.headers();
-        let timeout = match (headers.get("Connection"), headers.get("Keep-Alive")) {
-            (Some(connection), Some(_v))
-                if connection == http::header::HeaderValue::from_static("Keep-Alive") =>
-            {
-                // TODO: parse timeout
-                Duration::from_secs(5)
-            }
-            _ => Duration::from_secs(5),
-        };
+    // TODO: make configurable
+    let timeout_duration = Duration::from_secs(10);
+    const MAX_REQUESTS: usize = 200;
 
-        let beginning = Instant::now();
+    let req = decode(reader).await?;
+    let mut num_requests = 0;
+    if let Some(mut req) = req {
         loop {
+            num_requests += 1;
+            if num_requests > MAX_REQUESTS {
+                return Ok(());
+            }
+
             // TODO: what to do when the callback returns Err
             let mut res = encode(callback(&mut req).await?).await?;
             io::copy(&mut res, writer).await?;
-            let mut stream = req.into_body().into_reader().into_inner();
-            req = loop {
-                match decode(stream).await? {
-                    RequestOrReader::Request(r) => break r,
-                    RequestOrReader::Reader(r) => {
-                        let now = Instant::now();
-                        if now - beginning > timeout {
-                            return Ok(());
-                        }
-                        stream = r;
-                    }
-                }
+            let stream = req.into_body().into_reader().into_inner();
+            req = match timeout(timeout_duration, decode(stream)).await {
+                Ok(Ok(Some(r))) => r,
+                Ok(Ok(None)) | Err(TimeoutError { .. }) => break, /* EOF or timeout */
+                Ok(Err(e)) => return Err(e),
             };
         }
     }
@@ -165,14 +156,8 @@ where
     Ok(Encoder::new(buf, res.into_body()))
 }
 
-#[derive(Debug)]
-pub enum RequestOrReader<R: Read> {
-    Request(Request<Body<BufReader<R>>>),
-    Reader(R),
-}
-
 /// Decode an HTTP request on the server.
-pub async fn decode<R>(reader: R) -> Result<RequestOrReader<R>, Exception>
+pub async fn decode<R>(reader: R) -> Result<Option<Request<Body<BufReader<R>>>>, Exception>
 where
     R: Read + Unpin + Send,
 {
@@ -186,7 +171,7 @@ where
         let bytes_read = reader.read_until(b'\n', &mut buf).await?;
         // No more bytes are yielded from the stream.
         if bytes_read == 0 {
-            return Ok(RequestOrReader::Reader(reader.into_inner()));
+            return Ok(None);
         }
 
         // We've hit the end delimiter of the stream.
@@ -232,5 +217,5 @@ where
     };
 
     // Return the request.
-    Ok(RequestOrReader::Request(req.body(body)?))
+    Ok(Some(req.body(body)?))
 }
