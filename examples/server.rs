@@ -10,7 +10,6 @@ fn main() -> Result<(), async_h1::Exception> {
         let mut incoming = listener.incoming();
 
         while let Some(stream) = incoming.next().await {
-            println!("new TCP stream...");
             task::spawn(async {
                 let stream = stream?;
                 let (reader, writer) = &mut (&stream, &stream);
