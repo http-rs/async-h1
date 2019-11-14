@@ -13,15 +13,15 @@ use std::pin::Pin;
 
 use crate::{Body, Exception, MAX_HEADERS};
 
-pub async fn connect<'a, F, Fut, R, W, O: 'a>(
-    reader: &'a mut R,
-    writer: &'a mut W,
+pub async fn connect<'a, R, W, F, Fut, O>(
+    reader: R,
+    mut writer: W,
     callback: F,
 ) -> Result<(), Exception>
 where
     R: Read + Unpin + Send,
     W: Write + Unpin,
-    F: Fn(&mut Request<Body<BufReader<&'a mut R>>>) -> Fut,
+    F: Fn(&mut Request<Body<BufReader<R>>>) -> Fut,
     Fut: Future<Output = Result<Response<Body<O>>, Exception>>,
     O: Read + Unpin + Send,
 {
@@ -40,7 +40,7 @@ where
 
             // TODO: what to do when the callback returns Err
             let mut res = encode(callback(&mut req).await?).await?;
-            io::copy(&mut res, writer).await?;
+            io::copy(&mut res, &mut writer).await?;
             let stream = req.into_body().into_reader().into_inner();
             req = match timeout(timeout_duration, decode(stream)).await {
                 Ok(Ok(Some(r))) => r,
