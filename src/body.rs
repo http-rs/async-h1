@@ -31,6 +31,14 @@ impl<R: AsyncRead> Body<R> {
         }
     }
 
+    /// Create a new instance from a reader with a known size.
+    pub fn new_with_size(reader: R, size: usize) -> Self {
+        Self {
+            reader,
+            length: Some(size),
+        }
+    }
+
     /// Create a new empty body.
     pub fn empty(reader: R) -> Self {
         Self {
