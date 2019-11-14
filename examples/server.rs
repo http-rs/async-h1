@@ -12,6 +12,8 @@ fn main() -> Result<(), async_h1::Exception> {
         while let Some(stream) = incoming.next().await {
             task::spawn(async {
                 let stream = stream?;
+                println!("starting new connection from {}", stream.peer_addr()?);
+
                 let (reader, writer) = &mut (&stream, &stream);
                 server::connect(reader, writer, |_| {
                     async {
