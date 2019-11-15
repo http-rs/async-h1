@@ -126,9 +126,20 @@ where
     let body = match httparse_res
         .headers
         .iter()
-        .find(|h| h.name == "Content-Length")
+        .find(|h| h.name.eq_ignore_ascii_case("Content-Length"))
     {
-        Some(_header) => Body::new(reader), // TODO: use the header value
+        Some(content_length) => {
+            let length = std::str::from_utf8(content_length.value)
+                .ok()
+                .map(|s| s.parse::<usize>().ok())
+                .flatten();
+
+            if let Some(len) = length {
+                Body::new_with_size(reader, len)
+            } else {
+                return Err("Invalid value for Content-Length".into());
+            }
+        }
         None => Body::empty(reader),
     };
 
