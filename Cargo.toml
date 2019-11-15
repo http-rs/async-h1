@@ -20,3 +20,4 @@ futures-core-preview = "0.3.0-alpha.18"
 
 [dev-dependencies]
 futures-util = "0.3.0"
+pretty_assertions = "0.6.1"
