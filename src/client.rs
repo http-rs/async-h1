@@ -5,34 +5,34 @@ use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
 use futures_io::AsyncRead;
-use http::{Request, Response, Version};
+use http_types::{HttpVersion, Request, Response, StatusCode};
 
 use std::pin::Pin;
 
-use crate::{Body, Exception, MAX_HEADERS};
+use crate::{Exception, MAX_HEADERS};
 
 /// An HTTP encoder.
 #[derive(Debug)]
-pub struct Encoder<R: AsyncRead> {
+pub struct Encoder {
     /// Keep track how far we've indexed into the headers + body.
     cursor: usize,
     /// HTTP headers to be sent.
     headers: Vec<u8>,
     /// Check whether we're done sending headers.
     headers_done: bool,
-    /// HTTP body to be sent.
-    body: Body<R>,
+    /// Request with the HTTP body to be sent.
+    request: Request,
     /// Check whether we're done with the body.
     body_done: bool,
     /// Keep track of how many bytes have been read from the body stream.
     body_bytes_read: usize,
 }
 
-impl<R: AsyncRead> Encoder<R> {
+impl Encoder {
     /// Create a new instance.
-    pub(crate) fn new(headers: Vec<u8>, body: Body<R>) -> Self {
+    pub(crate) fn new(headers: Vec<u8>, request: Request) -> Self {
         Self {
-            body,
+            request,
             headers,
             cursor: 0,
             headers_done: false,
@@ -43,20 +43,14 @@ impl<R: AsyncRead> Encoder<R> {
 }
 
 /// Encode an HTTP request on the client.
-pub async fn encode<R: AsyncRead>(req: Request<Body<R>>) -> Result<Encoder<R>, std::io::Error> {
+pub async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
     let mut buf: Vec<u8> = vec![];
 
-    write!(
-        &mut buf,
-        "{} {} HTTP/1.1\r\n",
-        req.method().as_str(),
-        req.uri(),
-    )
-    .await?;
+    write!(&mut buf, "{} {} HTTP/1.1\r\n", req.method(), req.url(),).await?;
 
     // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
     // send all items in chunks.
-    if let Some(len) = req.body().len() {
+    if let Some(len) = req.len() {
         write!(&mut buf, "Content-Length: {}\r\n", len).await?;
     } else {
         // write!(&mut buf, "Transfer-Encoding: chunked\r\n")?;
@@ -64,24 +58,18 @@ pub async fn encode<R: AsyncRead>(req: Request<Body<R>>) -> Result<Encoder<R>, s
         // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Transfer-Encoding
         //      https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Trailer
     }
-    for (header, value) in req.headers() {
-        write!(
-            &mut buf,
-            "{}: {}\r\n",
-            header.as_str(),
-            value.to_str().unwrap()
-        )
-        .await?;
+    for (header, value) in req.headers().iter() {
+        write!(&mut buf, "{}: {}\r\n", header, value).await?;
     }
 
     write!(&mut buf, "\r\n").await?;
-    Ok(Encoder::new(buf, req.into_body()))
+    Ok(Encoder::new(buf, req))
 }
 
 /// Decode an HTTP respons on the client.
-pub async fn decode<R>(reader: R) -> Result<Response<Body<BufReader<R>>>, Exception>
+pub async fn decode<R>(reader: R) -> Result<Response, Exception>
 where
-    R: AsyncRead + Unpin + Send,
+    R: AsyncRead + Unpin + Send + 'static,
 {
     let mut reader = BufReader::new(reader);
     let mut buf = Vec::new();
@@ -109,45 +97,43 @@ where
         dbg!(String::from_utf8(buf).unwrap());
         return Err("Malformed HTTP head".into());
     }
+    let code = httparse_res.code.ok_or_else(|| "No status code found")?;
 
     // Convert httparse headers + body into a `http::Response` type.
-    let mut res = Response::builder();
+    let version = httparse_res.version.ok_or_else(|| "No version found")?;
+    let version = match version {
+        1 => HttpVersion::HTTP1_1,
+        _ => return Err("Unsupported HTTP version".into()),
+    };
+    use std::convert::TryFrom;
+    let mut res = Response::new(version, StatusCode::try_from(code)?);
     for header in httparse_res.headers.iter() {
-        res.header(header.name, header.value);
-    }
-    if let Some(version) = httparse_res.version {
-        res.version(match version {
-            1 => Version::HTTP_11,
-            _ => return Err("Unsupported HTTP version".into()),
-        });
+        res = res.set_header(header.name, std::str::from_utf8(header.value)?)?;
     }
 
     // Process the body if `Content-Length` was passed.
-    let body = match httparse_res
+    if let Some(content_length) = httparse_res
         .headers
         .iter()
         .find(|h| h.name.eq_ignore_ascii_case("Content-Length"))
     {
-        Some(content_length) => {
-            let length = std::str::from_utf8(content_length.value)
-                .ok()
-                .map(|s| s.parse::<usize>().ok())
-                .flatten();
+        let length = std::str::from_utf8(content_length.value)
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok());
 
-            if let Some(len) = length {
-                Body::new_with_size(reader, len)
-            } else {
-                return Err("Invalid value for Content-Length".into());
-            }
+        if let Some(_len) = length {
+            // TODO: set size
+            res = res.set_body(reader);
+        } else {
+            return Err("Invalid value for Content-Length".into());
         }
-        None => Body::empty(reader),
     };
 
     // Return the response.
-    Ok(res.body(body)?)
+    Ok(res)
 }
 
-impl<R: AsyncRead + Unpin> AsyncRead for Encoder<R> {
+impl AsyncRead for Encoder {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -168,7 +154,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for Encoder<R> {
         }
 
         if !self.body_done {
-            let n = ready!(Pin::new(&mut self.body).poll_read(cx, &mut buf[bytes_read..]))?;
+            let n = ready!(Pin::new(&mut self.request).poll_read(cx, &mut buf[bytes_read..]))?;
             bytes_read += n;
             self.body_bytes_read += n;
             if bytes_read == 0 {

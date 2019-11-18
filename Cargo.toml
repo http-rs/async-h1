@@ -12,11 +12,12 @@ readme = "README.md"
 edition = "2018"
 
 [dependencies]
+url = "2.1.0"
 httparse = "1.3.3"
-http = "0.1.17"
 futures-io = "0.3.0"
 async-std = { version = "0.99.12", features = ["unstable"] }
 futures-core-preview = "0.3.0-alpha.18"
+http-types = { path = '../http-types' }
 
 [dev-dependencies]
 futures-util = "0.3.0"
