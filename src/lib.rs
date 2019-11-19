@@ -36,10 +36,8 @@
 /// The maximum amount of headers parsed on the server.
 const MAX_HEADERS: usize = 128;
 
-pub use body::Body;
 pub use check::check;
 
-mod body;
 mod check;
 
 pub mod client;
