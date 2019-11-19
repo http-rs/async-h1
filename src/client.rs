@@ -5,7 +5,7 @@ use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
 use futures_io::AsyncRead;
-use http_types::{HttpVersion, Request, Response, StatusCode};
+use http_types::{Request, Response, StatusCode};
 
 use std::pin::Pin;
 
@@ -101,12 +101,11 @@ where
 
     // Convert httparse headers + body into a `http::Response` type.
     let version = httparse_res.version.ok_or_else(|| "No version found")?;
-    let version = match version {
-        1 => HttpVersion::HTTP1_1,
-        _ => return Err("Unsupported HTTP version".into()),
-    };
+    if version != 1 {
+        return Err("Unsupported HTTP version".into());
+    }
     use std::convert::TryFrom;
-    let mut res = Response::new(version, StatusCode::try_from(code)?);
+    let mut res = Response::new(StatusCode::try_from(code)?);
     for header in httparse_res.headers.iter() {
         res = res.set_header(header.name, std::str::from_utf8(header.value)?)?;
     }
