@@ -53,7 +53,7 @@ where
 
             // If we have reference to the stream, unwrap it. Otherwise,
             // get the underlying stream from the request
-            let to_decode = decoded.to_stream();
+            let to_decode = decoded.into_stream();
 
             // Copy the response into the writer
             io::copy(&mut res, &mut writer).await?;
@@ -166,6 +166,9 @@ pub async fn encode(res: Response) -> io::Result<Encoder> {
     Ok(Encoder::new(buf, res))
 }
 
+/// The number returned from httparse when the request is HTTP 1.1
+const HTTP_1_1_VERSION: u8 = 1;
+
 /// Decode an HTTP request on the server.
 pub async fn decode<R>(reader: R) -> Result<Option<DecodedRequest>, Exception>
 where
@@ -203,7 +206,7 @@ where
     let uri = httparse_req.path.ok_or_else(|| "No uri found")?;
     let uri = url::Url::parse(uri)?;
     let version = httparse_req.version.ok_or_else(|| "No version found")?;
-    if version != 1 {
+    if version != HTTP_1_1_VERSION {
         return Err("Unsupported HTTP version".into());
     }
     let mut req = Request::new(Method::from_str(method)?, uri);
@@ -222,10 +225,9 @@ where
             .and_then(|s| s.parse::<usize>().ok());
 
         if let Some(len) = length {
-            req = req.set_body(reader);
+            req = req.set_body_reader(reader);
             req = req.set_len(len);
 
-            // Return the request.
             Ok(Some(DecodedRequest::WithBody(req)))
         } else {
             return Err("Invalid value for Content-Length".into());
@@ -263,9 +265,11 @@ impl DecodedRequest {
     }
 
     /// Consume self and get access to the underlying stream
-    fn to_stream(self) -> Box<dyn BufRead + Unpin + Send + 'static> {
+    ///
+    /// If the request has a body, the underlying stream is t
+    fn into_stream(self) -> Box<dyn BufRead + Unpin + Send + 'static> {
         match self {
-            DecodedRequest::WithBody(r) => r.into_body(),
+            DecodedRequest::WithBody(r) => r.into_body_reader(),
             DecodedRequest::WithoutBody(_, s) => s,
         }
     }
