@@ -53,7 +53,7 @@ where
 
             // If we have reference to the stream, unwrap it. Otherwise,
             // get the underlying stream from the request
-            let to_decode = decoded.into_stream();
+            let to_decode = decoded.into_reader();
 
             // Copy the response into the writer
             io::copy(&mut res, &mut writer).await?;
@@ -264,10 +264,11 @@ impl DecodedRequest {
         }
     }
 
-    /// Consume self and get access to the underlying stream
+    /// Consume self and get access to the underlying reader
     ///
-    /// If the request has a body, the underlying stream is t
-    fn into_stream(self) -> Box<dyn BufRead + Unpin + Send + 'static> {
+    /// When the request has a body, the underlying reader is the body.
+    /// When it does not, the underlying body has been passed alongside the request.
+    fn into_reader(self) -> Box<dyn BufRead + Unpin + Send + 'static> {
         match self {
             DecodedRequest::WithBody(r) => r.into_body_reader(),
             DecodedRequest::WithoutBody(_, s) => s,
