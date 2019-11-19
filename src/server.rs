@@ -1,13 +1,14 @@
 //! Process HTTP connections on the server.
 
 use async_std::future::{timeout, Future, TimeoutError};
-use async_std::io::{self, BufReader};
+use async_std::io::{self, BufRead, BufReader};
 use async_std::io::{Read, Write};
 use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
-use http_types::{HttpVersion, Method, Request, Response};
-use std::convert::TryFrom;
+use http_types::{Method, Request, Response};
+use std::fmt;
+use std::str::FromStr;
 use std::time::Duration;
 
 use std::pin::Pin;
@@ -28,25 +29,43 @@ where
     // TODO: make configurable
     let timeout_duration = Duration::from_secs(10);
     const MAX_REQUESTS: usize = 200;
-
-    let req = decode(reader).await?;
     let mut num_requests = 0;
-    if let Some(mut req) = req {
+
+    // Decode a request. This may be the first of many since
+    // the connection is Keep-Alive by default
+    let decoded = decode(reader).await?;
+    // Decode returns one of three things;
+    // * A request with its body reader set to the underlying TCP stream
+    // * A request with an empty body AND the underlying stream
+    // * No request (because of the stream closed) and no underlying stream
+    if let Some(mut decoded) = decoded {
         loop {
             num_requests += 1;
             if num_requests > MAX_REQUESTS {
+                // We've exceeded the max number of requests per connection
                 return Ok(());
             }
 
+            // Pass the request to the user defined request handler callback.
+            // Encode the response we get back.
             // TODO: what to do when the callback returns Err
-            let mut res = encode(callback(&mut req).await?).await?;
-            let stream = req.into_body();
+            let mut res = encode(callback(decoded.mut_request()).await?).await?;
+
+            // If we have reference to the stream, unwrap it. Otherwise,
+            // get the underlying stream from the request
+            let to_decode = decoded.into_reader();
+
+            // Copy the response into the writer
             io::copy(&mut res, &mut writer).await?;
-            req = match timeout(timeout_duration, decode(stream)).await {
+
+            // Decode a new request, timing out if this takes longer than the
+            // timeout duration.
+            decoded = match timeout(timeout_duration, decode(to_decode)).await {
                 Ok(Ok(Some(r))) => r,
                 Ok(Ok(None)) | Err(TimeoutError { .. }) => break, /* EOF or timeout */
                 Ok(Err(e)) => return Err(e),
             };
+            // Loop back with the new request and stream and start again
         }
     }
 
@@ -147,8 +166,11 @@ pub async fn encode(res: Response) -> io::Result<Encoder> {
     Ok(Encoder::new(buf, res))
 }
 
+/// The number returned from httparse when the request is HTTP 1.1
+const HTTP_1_1_VERSION: u8 = 1;
+
 /// Decode an HTTP request on the server.
-pub async fn decode<R>(reader: R) -> Result<Option<Request>, Exception>
+pub async fn decode<R>(reader: R) -> Result<Option<DecodedRequest>, Exception>
 where
     R: Read + Unpin + Send + 'static,
 {
@@ -184,11 +206,10 @@ where
     let uri = httparse_req.path.ok_or_else(|| "No uri found")?;
     let uri = url::Url::parse(uri)?;
     let version = httparse_req.version.ok_or_else(|| "No version found")?;
-    let version = match version {
-        1 => HttpVersion::HTTP1_1,
-        _ => return Err("Unsupported HTTP version".into()),
-    };
-    let mut req = Request::new(version, Method::try_from(method)?, uri);
+    if version != HTTP_1_1_VERSION {
+        return Err("Unsupported HTTP version".into());
+    }
+    let mut req = Request::new(Method::from_str(method)?, uri);
     for header in httparse_req.headers.iter() {
         req = req.set_header(header.name, std::str::from_utf8(header.value)?)?;
     }
@@ -203,14 +224,54 @@ where
             .ok()
             .and_then(|s| s.parse::<usize>().ok());
 
-        if let Some(_len) = length {
-            // TODO: set len
-            req = req.set_body(reader);
+        if let Some(len) = length {
+            req = req.set_body_reader(reader);
+            req = req.set_len(len);
+
+            Ok(Some(DecodedRequest::WithBody(req)))
         } else {
             return Err("Invalid value for Content-Length".into());
         }
-    };
+    } else {
+        Ok(Some(DecodedRequest::WithoutBody(req, Box::new(reader))))
+    }
+}
 
-    // Return the request.
-    Ok(Some(req))
+/// A decoded response
+///
+/// Either a request with body stream OR a request without a
+/// a body stream paired with the underlying stream
+pub enum DecodedRequest {
+    WithBody(Request),
+    WithoutBody(Request, Box<dyn BufRead + Unpin + Send + 'static>),
+}
+
+impl fmt::Debug for DecodedRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DecodedRequest::WithBody(_) => write!(f, "WithBody"),
+            DecodedRequest::WithoutBody(_, _) => write!(f, "WithoutBody"),
+        }
+    }
+}
+
+impl DecodedRequest {
+    /// Get a mutable reference to the request
+    fn mut_request(&mut self) -> &mut Request {
+        match self {
+            DecodedRequest::WithBody(r) => r,
+            DecodedRequest::WithoutBody(r, _) => r,
+        }
+    }
+
+    /// Consume self and get access to the underlying reader
+    ///
+    /// When the request has a body, the underlying reader is the body.
+    /// When it does not, the underlying body has been passed alongside the request.
+    fn into_reader(self) -> Box<dyn BufRead + Unpin + Send + 'static> {
+        match self {
+            DecodedRequest::WithBody(r) => r.into_body_reader(),
+            DecodedRequest::WithoutBody(_, s) => s,
+        }
+    }
 }
