@@ -1,13 +1,13 @@
 //! Process HTTP connections on the server.
 
 use async_std::future::{timeout, Future, TimeoutError};
-use async_std::io::{self, BufReader};
+use async_std::io::{self, BufRead, BufReader};
 use async_std::io::{Read, Write};
 use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
-use http_types::{HttpVersion, Method, Request, Response};
-use std::convert::TryFrom;
+use http_types::{Method, Request, Response};
+use std::str::FromStr;
 use std::time::Duration;
 
 use std::pin::Pin;
@@ -31,7 +31,11 @@ where
 
     let req = decode(reader).await?;
     let mut num_requests = 0;
-    if let Some(mut req) = req {
+    if let Some((mut req, stream)) = req {
+        let mut stream: Option<Box<dyn BufRead + Unpin + Send + 'static>> = match stream {
+            Some(s) => Some(Box::new(s)),
+            None => None,
+        };
         loop {
             num_requests += 1;
             if num_requests > MAX_REQUESTS {
@@ -40,12 +44,21 @@ where
 
             // TODO: what to do when the callback returns Err
             let mut res = encode(callback(&mut req).await?).await?;
-            let stream = req.into_body();
+            let to_decode = match stream {
+                None => req.into_body(),
+                Some(s) => s,
+            };
             io::copy(&mut res, &mut writer).await?;
-            req = match timeout(timeout_duration, decode(stream)).await {
+            let (new_request, new_stream) = match timeout(timeout_duration, decode(to_decode)).await
+            {
                 Ok(Ok(Some(r))) => r,
                 Ok(Ok(None)) | Err(TimeoutError { .. }) => break, /* EOF or timeout */
                 Ok(Err(e)) => return Err(e),
+            };
+            req = new_request;
+            stream = match new_stream {
+                Some(s) => Some(Box::new(s)),
+                None => None,
             };
         }
     }
@@ -148,7 +161,7 @@ pub async fn encode(res: Response) -> io::Result<Encoder> {
 }
 
 /// Decode an HTTP request on the server.
-pub async fn decode<R>(reader: R) -> Result<Option<Request>, Exception>
+pub async fn decode<R>(reader: R) -> Result<Option<(Request, Option<BufReader<R>>)>, Exception>
 where
     R: Read + Unpin + Send + 'static,
 {
@@ -184,11 +197,10 @@ where
     let uri = httparse_req.path.ok_or_else(|| "No uri found")?;
     let uri = url::Url::parse(uri)?;
     let version = httparse_req.version.ok_or_else(|| "No version found")?;
-    let version = match version {
-        1 => HttpVersion::HTTP1_1,
-        _ => return Err("Unsupported HTTP version".into()),
-    };
-    let mut req = Request::new(version, Method::try_from(method)?, uri);
+    if version != 1 {
+        return Err("Unsupported HTTP version".into());
+    }
+    let mut req = Request::new(Method::from_str(method)?, uri);
     for header in httparse_req.headers.iter() {
         req = req.set_header(header.name, std::str::from_utf8(header.value)?)?;
     }
@@ -203,14 +215,16 @@ where
             .ok()
             .and_then(|s| s.parse::<usize>().ok());
 
-        if let Some(_len) = length {
-            // TODO: set len
+        if let Some(len) = length {
             req = req.set_body(reader);
+            req = req.set_len(len);
+
+            // Return the request.
+            Ok(Some((req, None)))
         } else {
             return Err("Invalid value for Content-Length".into());
         }
-    };
-
-    // Return the request.
-    Ok(Some(req))
+    } else {
+        Ok(Some((req, Some(reader))))
+    }
 }
