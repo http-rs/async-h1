@@ -2,7 +2,7 @@ use async_h1::server;
 use async_std::net;
 use async_std::prelude::*;
 use async_std::task;
-use http_types::{HttpVersion, Response, StatusCode};
+use http_types::{Response, StatusCode};
 
 fn main() -> Result<(), async_h1::Exception> {
     task::block_on(async {
@@ -17,7 +17,7 @@ fn main() -> Result<(), async_h1::Exception> {
 
                 let stream = Stream::new(stream);
                 server::connect(stream.clone(), stream, |_| {
-                    async { Ok(Response::new(HttpVersion::HTTP1_1, StatusCode::Ok)) }
+                    async { Ok(Response::new(StatusCode::Ok)) }
                 })
                 .await
             });

@@ -1,6 +1,6 @@
 use async_h1::client;
 use async_std::{io, net, task};
-use http_types::{HttpVersion, Method, Request, Url};
+use http_types::{Method, Request, Url};
 
 fn main() -> Result<(), async_h1::Exception> {
     task::block_on(async {
@@ -11,12 +11,8 @@ fn main() -> Result<(), async_h1::Exception> {
         for i in 0usize..2 {
             println!("making request {}/2", i + 1);
 
-            let mut req = client::encode(Request::new(
-                HttpVersion::HTTP1_1,
-                Method::Get,
-                Url::parse("/foo").unwrap(),
-            ))
-            .await?;
+            let mut req =
+                client::encode(Request::new(Method::Get, Url::parse("/foo").unwrap())).await?;
             io::copy(&mut req, &mut stream.clone()).await?;
 
             // read the response
