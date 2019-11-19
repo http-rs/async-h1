@@ -7,6 +7,7 @@ use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
 use http_types::{Method, Request, Response};
+use std::fmt;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -28,38 +29,43 @@ where
     // TODO: make configurable
     let timeout_duration = Duration::from_secs(10);
     const MAX_REQUESTS: usize = 200;
-
-    let req = decode(reader).await?;
     let mut num_requests = 0;
-    if let Some((mut req, stream)) = req {
-        let mut stream: Option<Box<dyn BufRead + Unpin + Send + 'static>> = match stream {
-            Some(s) => Some(Box::new(s)),
-            None => None,
-        };
+
+    // Decode a request. This may be the first of many since
+    // the connection is Keep-Alive by default
+    let decoded = decode(reader).await?;
+    // Decode returns one of three things;
+    // * A request with its body reader set to the underlying TCP stream
+    // * A request with an empty body AND the underlying stream
+    // * No request (because of the stream closed) and no underlying stream
+    if let Some(mut decoded) = decoded {
         loop {
             num_requests += 1;
             if num_requests > MAX_REQUESTS {
+                // We've exceeded the max number of requests per connection
                 return Ok(());
             }
 
+            // Pass the request to the user defined request handler callback.
+            // Encode the response we get back.
             // TODO: what to do when the callback returns Err
-            let mut res = encode(callback(&mut req).await?).await?;
-            let to_decode = match stream {
-                None => req.into_body(),
-                Some(s) => s,
-            };
+            let mut res = encode(callback(decoded.mut_request()).await?).await?;
+
+            // If we have reference to the stream, unwrap it. Otherwise,
+            // get the underlying stream from the request
+            let to_decode = decoded.to_stream();
+
+            // Copy the response into the writer
             io::copy(&mut res, &mut writer).await?;
-            let (new_request, new_stream) = match timeout(timeout_duration, decode(to_decode)).await
-            {
+
+            // Decode a new request, timing out if this takes longer than the
+            // timeout duration.
+            decoded = match timeout(timeout_duration, decode(to_decode)).await {
                 Ok(Ok(Some(r))) => r,
                 Ok(Ok(None)) | Err(TimeoutError { .. }) => break, /* EOF or timeout */
                 Ok(Err(e)) => return Err(e),
             };
-            req = new_request;
-            stream = match new_stream {
-                Some(s) => Some(Box::new(s)),
-                None => None,
-            };
+            // Loop back with the new request and stream and start again
         }
     }
 
@@ -161,7 +167,7 @@ pub async fn encode(res: Response) -> io::Result<Encoder> {
 }
 
 /// Decode an HTTP request on the server.
-pub async fn decode<R>(reader: R) -> Result<Option<(Request, Option<BufReader<R>>)>, Exception>
+pub async fn decode<R>(reader: R) -> Result<Option<DecodedRequest>, Exception>
 where
     R: Read + Unpin + Send + 'static,
 {
@@ -220,11 +226,47 @@ where
             req = req.set_len(len);
 
             // Return the request.
-            Ok(Some((req, None)))
+            Ok(Some(DecodedRequest::WithBody(req)))
         } else {
             return Err("Invalid value for Content-Length".into());
         }
     } else {
-        Ok(Some((req, Some(reader))))
+        Ok(Some(DecodedRequest::WithoutBody(req, Box::new(reader))))
+    }
+}
+
+/// A decoded response
+///
+/// Either a request with body stream OR a request without a
+/// a body stream paired with the underlying stream
+pub enum DecodedRequest {
+    WithBody(Request),
+    WithoutBody(Request, Box<dyn BufRead + Unpin + Send + 'static>),
+}
+
+impl fmt::Debug for DecodedRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DecodedRequest::WithBody(_) => write!(f, "WithBody"),
+            DecodedRequest::WithoutBody(_, _) => write!(f, "WithoutBody"),
+        }
+    }
+}
+
+impl DecodedRequest {
+    /// Get a mutable reference to the request
+    fn mut_request(&mut self) -> &mut Request {
+        match self {
+            DecodedRequest::WithBody(r) => r,
+            DecodedRequest::WithoutBody(r, _) => r,
+        }
+    }
+
+    /// Consume self and get access to the underlying stream
+    fn to_stream(self) -> Box<dyn BufRead + Unpin + Send + 'static> {
+        match self {
+            DecodedRequest::WithBody(r) => r.into_body(),
+            DecodedRequest::WithoutBody(_, s) => s,
+        }
     }
 }
