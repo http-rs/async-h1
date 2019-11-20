@@ -3,14 +3,18 @@ use std::fmt::{self, Display, Formatter};
 use std::str::{from_utf8, FromStr};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// HTTP timestamp type.
-///
-/// Parse using `FromStr` impl.
+const IMF_FIXDATE_LENGTH: usize = 29;
+const RFC850_MAX_LENGTH: usize = 23;
+const ASCTIME_LENGTH: usize = 24;
+
+const YEAR_9999_SECONDS: u64 = 253402300800;
+const SECONDS_IN_DAY: u64 = 86400;
+const SECONDS_IN_HOUR: u64 = 3600;
+
 /// Format using the `Display` trait.
 /// Convert timestamp into/from `SytemTime` to use.
 /// Supports comparsion and sorting.
-//#[derive(Copy, Clone, Debug, Eq, Ord)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, Ord)]
 pub struct HttpDate {
     /// 0...59
     second: u8,
@@ -62,7 +66,12 @@ impl HttpDate {
 
 fn parse_imf_fixdate(s: &[u8]) -> Result<HttpDate, Exception> {
     // Example: `Sun, 06 Nov 1994 08:49:37 GMT`
-    if s.len() != 29 || &s[25..] != b" GMT" || s[16] != b' ' || s[19] != b':' || s[22] != b':' {
+    if s.len() != IMF_FIXDATE_LENGTH
+        || &s[25..] != b" GMT"
+        || s[16] != b' '
+        || s[19] != b':'
+        || s[22] != b':'
+    {
         return Err("Date time not in imf fixdate format".into());
     }
     Ok(HttpDate {
@@ -101,7 +110,7 @@ fn parse_imf_fixdate(s: &[u8]) -> Result<HttpDate, Exception> {
 
 fn parse_rfc850_date(s: &[u8]) -> Result<HttpDate, Exception> {
     // Example: `Sunday, 06-Nov-94 08:49:37 GMT`
-    if s.len() < 23 {
+    if s.len() < RFC850_MAX_LENGTH {
         return Err("Date time not in rfc850 format".into());
     }
 
@@ -155,7 +164,8 @@ fn parse_rfc850_date(s: &[u8]) -> Result<HttpDate, Exception> {
 
 fn parse_asctime(s: &[u8]) -> Result<HttpDate, Exception> {
     // Example: `Sun Nov  6 08:49:37 1994`
-    if s.len() != 24 || s[10] != b' ' || s[13] != b':' || s[16] != b':' || s[19] != b' ' {
+    if s.len() != ASCTIME_LENGTH || s[10] != b' ' || s[13] != b':' || s[16] != b':' || s[19] != b' '
+    {
         return Err("Date time not in asctime format".into());
     }
     Ok(HttpDate {
@@ -202,7 +212,7 @@ impl From<SystemTime> for HttpDate {
             .expect("all times should be after the epoch");
         let secs_since_epoch = dur.as_secs();
 
-        if secs_since_epoch >= 253402300800 {
+        if secs_since_epoch >= YEAR_9999_SECONDS {
             // year 9999
             panic!("date must be before year 9999");
         }
@@ -213,8 +223,8 @@ impl From<SystemTime> for HttpDate {
         const DAYS_PER_100Y: i64 = 365 * 100 + 24;
         const DAYS_PER_4Y: i64 = 365 * 4 + 1;
 
-        let days = (secs_since_epoch / 86400) as i64 - LEAPOCH;
-        let secs_of_day = secs_since_epoch % 86400;
+        let days = (secs_since_epoch / SECONDS_IN_DAY) as i64 - LEAPOCH;
+        let secs_of_day = secs_since_epoch % SECONDS_IN_DAY;
 
         let mut qc_cycles = days / DAYS_PER_400Y;
         let mut remdays = days % DAYS_PER_400Y;
@@ -268,8 +278,8 @@ impl From<SystemTime> for HttpDate {
 
         HttpDate {
             second: (secs_of_day % 60) as u8,
-            minute: ((secs_of_day % 3600) / 60) as u8,
-            hour: (secs_of_day / 3600) as u8,
+            minute: ((secs_of_day % SECONDS_IN_HOUR) / 60) as u8,
+            hour: (secs_of_day / SECONDS_IN_HOUR) as u8,
             day: mday as u8,
             month: month as u8,
             year: year as u16,
@@ -306,8 +316,8 @@ impl From<HttpDate> for SystemTime {
             + Duration::from_secs(
                 http_date.second as u64
                     + http_date.minute as u64 * 60
-                    + http_date.hour as u64 * 3600
-                    + days * 86400,
+                    + http_date.hour as u64 * SECONDS_IN_HOUR
+                    + days * SECONDS_IN_DAY,
             )
     }
 }
@@ -403,10 +413,9 @@ fn is_leap_year(year: u16) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::str;
     use std::time::{Duration, UNIX_EPOCH};
 
-    use super::{fmt_http_date, parse_http_date, HttpDate};
+    use super::{fmt_http_date, parse_http_date, HttpDate, SECONDS_IN_DAY, SECONDS_IN_HOUR};
 
     #[test]
     fn test_rfc_example() {
@@ -438,9 +447,9 @@ mod tests {
     fn test3() {
         let mut d = UNIX_EPOCH;
         assert_eq!(d, parse_http_date("Thu, 01 Jan 1970 00:00:00 GMT").unwrap());
-        d += Duration::from_secs(3600);
+        d += Duration::from_secs(SECONDS_IN_HOUR);
         assert_eq!(d, parse_http_date("Thu, 01 Jan 1970 01:00:00 GMT").unwrap());
-        d += Duration::from_secs(86400);
+        d += Duration::from_secs(SECONDS_IN_DAY);
         assert_eq!(d, parse_http_date("Fri, 02 Jan 1970 01:00:00 GMT").unwrap());
         d += Duration::from_secs(2592000);
         assert_eq!(d, parse_http_date("Sun, 01 Feb 1970 01:00:00 GMT").unwrap());
@@ -462,17 +471,6 @@ mod tests {
         assert_eq!(fmt_http_date(d), "Thu, 01 Jan 1970 00:00:00 GMT");
         let d = UNIX_EPOCH + Duration::from_secs(1475419451);
         assert_eq!(fmt_http_date(d), "Sun, 02 Oct 2016 14:44:11 GMT");
-    }
-
-    #[allow(dead_code)]
-    fn testcase(data: &[u8]) {
-        if let Ok(s) = str::from_utf8(data) {
-            println!("{:?}", s);
-            if let Ok(d) = parse_http_date(s) {
-                let o = fmt_http_date(d);
-                assert!(!o.is_empty());
-            }
-        }
     }
 
     #[test]
