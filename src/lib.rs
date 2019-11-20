@@ -45,5 +45,7 @@ mod check;
 pub mod client;
 pub mod server;
 
+mod date;
+
 /// A generic fallible type.
 pub type Exception = Box<dyn std::error::Error + Send + Sync + 'static>;
