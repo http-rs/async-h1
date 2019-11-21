@@ -153,7 +153,7 @@ pub async fn encode(res: Response) -> io::Result<Encoder> {
         std::io::Write::write_fmt(&mut buf, format_args!("Content-Length: {}\r\n", len))?;
     } else {
         std::io::Write::write_fmt(&mut buf, format_args!("Transfer-Encoding: chunked\r\n"))?;
-        panic!("chunked encoding is not implemented yet");
+        unimplemented!("chunked encoding");
         // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Transfer-Encoding
         //      https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Trailer
     }
@@ -204,7 +204,15 @@ where
     // Convert httparse headers + body into a `http::Request` type.
     let method = httparse_req.method.ok_or_else(|| "No method found")?;
     let uri = httparse_req.path.ok_or_else(|| "No uri found")?;
-    let uri = url::Url::parse(uri)?;
+    // TODO: hack until we have a type that can represent relative URLs
+    let host = httparse_req
+        .headers
+        .iter()
+        .find(|h| h.name == "Host")
+        .expect("Host header must be set")
+        .value;
+    let uri = url::Url::parse(&format!("{}{}", std::str::from_utf8(host).unwrap(), uri))?;
+
     let version = httparse_req.version.ok_or_else(|| "No version found")?;
     if version != HTTP_1_1_VERSION {
         return Err("Unsupported HTTP version".into());

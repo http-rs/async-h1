@@ -20,7 +20,9 @@ fn main() -> Result<(), async_h1::Exception> {
                     async { Ok(Response::new(StatusCode::Ok)) }
                 })
                 .await
-            });
+            })
+            .await
+            .unwrap();
         }
         Ok(())
     })
