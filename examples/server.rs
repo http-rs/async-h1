@@ -1,7 +1,11 @@
+use std::pin::Pin;
+use std::sync::Arc;
+
 use async_h1::server;
-use async_std::net;
+use async_std::io::{self, Read, Write};
+use async_std::net::{self, TcpStream};
 use async_std::prelude::*;
-use async_std::task;
+use async_std::task::{self, Context, Poll};
 use http_types::{Response, StatusCode};
 
 fn main() -> Result<(), async_h1::Exception> {
@@ -15,7 +19,9 @@ fn main() -> Result<(), async_h1::Exception> {
                 let stream = stream?;
                 println!("starting new connection from {}", stream.peer_addr()?);
 
-                let stream = Stream::new(stream);
+                // TODO: Delete this line when we implement `Clone` for `TcpStream`.
+                let stream = Stream(Arc::new(stream));
+
                 server::connect(stream.clone(), stream, |_| {
                     async { Ok(Response::new(StatusCode::Ok)) }
                 })
@@ -26,59 +32,29 @@ fn main() -> Result<(), async_h1::Exception> {
     })
 }
 
-use async_std::{
-    io::{self, Read, Write},
-    net::TcpStream,
-    task::{Context, Poll},
-};
-use std::{
-    pin::Pin,
-    sync::{Arc, Mutex},
-};
-
-struct Stream {
-    internal: Arc<Mutex<TcpStream>>,
-}
-
-impl Stream {
-    fn new(internal: TcpStream) -> Self {
-        Stream {
-            internal: Arc::new(Mutex::new(internal)),
-        }
-    }
-}
-
-impl Clone for Stream {
-    fn clone(&self) -> Self {
-        Stream {
-            internal: self.internal.clone(),
-        }
-    }
-}
+#[derive(Clone)]
+struct Stream(Arc<TcpStream>);
 
 impl Read for Stream {
     fn poll_read(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        <TcpStream as Read>::poll_read(Pin::new(&mut self.internal.lock().unwrap()), cx, buf)
+        Pin::new(&mut &*self.0).poll_read(cx, buf)
     }
 }
+
 impl Write for Stream {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        <TcpStream as Write>::poll_write(Pin::new(&mut self.internal.lock().unwrap()), cx, buf)
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<io::Result<usize>> {
+        Pin::new(&mut &*self.0).poll_write(cx, buf)
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        <TcpStream as Write>::poll_flush(Pin::new(&mut self.internal.lock().unwrap()), cx)
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
+        Pin::new(&mut &*self.0).poll_flush(cx)
     }
 
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        <TcpStream as Write>::poll_close(Pin::new(&mut self.internal.lock().unwrap()), cx)
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
+        Pin::new(&mut &*self.0).poll_close(cx)
     }
 }
