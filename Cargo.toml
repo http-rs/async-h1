@@ -15,7 +15,7 @@ edition = "2018"
 url = "2.1.0"
 httparse = "1.3.3"
 futures-io = "0.3.0"
-async-std = { version = "0.99.12", features = ["unstable"] }
+async-std = { version = "1", features = ["unstable"] }
 futures-core-preview = "0.3.0-alpha.18"
 http-types = { path = '../http-types' }
 
