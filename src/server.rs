@@ -19,7 +19,7 @@ pub async fn connect<R, W, F, Fut>(
     addr: &str,
     reader: R,
     mut writer: W,
-    callback: F,
+    endpoint: F,
 ) -> Result<(), Exception>
 where
     R: Read + Unpin + Send + 'static,
@@ -47,17 +47,20 @@ where
                 return Ok(());
             }
 
-            // Pass the request to the user defined request handler callback.
+            // Pass the request to the user defined request handler endpoint.
             // Encode the response we get back.
-            // TODO: what to do when the callback returns Err
-            let mut res = encode(callback(decoded.mut_request()).await?).await?;
+            // TODO: what to do when the endpoint returns Err
+            let res = endpoint(decoded.mut_request()).await?;
+            let mut encoder = Encoder::encode(res);
 
             // If we have reference to the stream, unwrap it. Otherwise,
             // get the underlying stream from the request
             let to_decode = decoded.into_reader();
 
             // Copy the response into the writer
-            io::copy(&mut res, &mut writer).await?;
+            // TODO: don't double wrap BufReaders, but instead write a version of
+            // io::copy that expects a BufReader.
+            io::copy(&mut encoder, &mut writer).await?;
 
             // Decode a new request, timing out if this takes longer than the
             // timeout duration.
@@ -81,11 +84,11 @@ pub struct Encoder {
     /// Keep track how far we've indexed into the headers + body.
     cursor: usize,
     /// HTTP headers to be sent.
-    headers: Vec<u8>,
+    head: Option<Vec<u8>>,
     /// Check whether we're done sending headers.
-    headers_done: bool,
+    head_done: bool,
     /// Response containing the HTTP body to be sent.
-    response: Response,
+    res: Response,
     /// Check whether we're done with the body.
     body_done: bool,
     /// Keep track of how many bytes have been read from the body stream.
@@ -94,15 +97,43 @@ pub struct Encoder {
 
 impl Encoder {
     /// Create a new instance.
-    pub(crate) fn new(headers: Vec<u8>, response: Response) -> Self {
+    pub(crate) fn encode(res: Response) -> Self {
         Self {
-            response,
-            headers,
+            res,
+            head: None,
             cursor: 0,
-            headers_done: false,
+            head_done: false,
             body_done: false,
             body_bytes_read: 0,
         }
+    }
+
+    fn encode_head(&mut self) -> io::Result<()> {
+        let mut head: Vec<u8> = vec![];
+
+        let reason = self.res.status().canonical_reason();
+        let status = self.res.status();
+        std::io::Write::write_fmt(&mut head, format_args!("HTTP/1.1 {} {}\r\n", status, reason))?;
+
+        // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
+        // send all items in chunks.
+        if let Some(len) = self.res.len() {
+            std::io::Write::write_fmt(&mut head, format_args!("Content-Length: {}\r\n", len))?;
+        } else {
+            std::io::Write::write_fmt(&mut head, format_args!("Transfer-Encoding: chunked\r\n"))?;
+            panic!("chunked encoding is not implemented yet");
+            // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Transfer-Encoding
+            //      https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Trailer
+        }
+
+        for (header, value) in self.res.headers().iter() {
+            std::io::Write::write_fmt(&mut head, format_args!("{}: {}\r\n", header.as_str(), value))?
+        }
+
+        std::io::Write::write_fmt(&mut head, format_args!("\r\n"))?;
+
+        self.head = Some(head);
+        Ok(())
     }
 }
 
@@ -112,22 +143,32 @@ impl Read for Encoder {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
+        // Encode the headers to a buffer, the first time we poll
+        if let None = self.head {
+            self.encode_head()?;
+        }
+
         // Send the headers. As long as the headers aren't fully sent yet we
         // keep sending more of the headers.
         let mut bytes_read = 0;
-        if !self.headers_done {
-            let len = std::cmp::min(self.headers.len() - self.cursor, buf.len());
+
+        // Read from the serialized headers, url and methods.
+        if !self.head_done {
+            let head = self.head.as_ref().unwrap();
+            let head_len = head.len();
+            let len = std::cmp::min(head.len() - self.cursor, buf.len());
             let range = self.cursor..self.cursor + len;
-            buf[0..len].copy_from_slice(&mut self.headers[range]);
+            buf[0..len].copy_from_slice(&head[range]);
             self.cursor += len;
-            if self.cursor == self.headers.len() {
-                self.headers_done = true;
+            if self.cursor == head_len {
+                self.head_done = true;
             }
             bytes_read += len;
         }
 
+        // Read from the AsyncRead impl on the inner Response struct.
         if !self.body_done {
-            let n = ready!(Pin::new(&mut self.response).poll_read(cx, &mut buf[bytes_read..]))?;
+            let n = ready!(Pin::new(&mut self.res).poll_read(cx, &mut buf[bytes_read..]))?;
             bytes_read += n;
             self.body_bytes_read += n;
             if bytes_read == 0 {
@@ -139,39 +180,11 @@ impl Read for Encoder {
     }
 }
 
-/// Encode an HTTP request on the server.
-// TODO: return a reader in the response
-pub async fn encode(res: Response) -> io::Result<Encoder> {
-    let mut buf: Vec<u8> = vec![];
-
-    let reason = res.status().canonical_reason();
-    let status = res.status();
-    std::io::Write::write_fmt(&mut buf, format_args!("HTTP/1.1 {} {}\r\n", status, reason))?;
-
-    // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
-    // send all items in chunks.
-    if let Some(len) = res.len() {
-        std::io::Write::write_fmt(&mut buf, format_args!("Content-Length: {}\r\n", len))?;
-    } else {
-        std::io::Write::write_fmt(&mut buf, format_args!("Transfer-Encoding: chunked\r\n"))?;
-        panic!("chunked encoding is not implemented yet");
-        // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Transfer-Encoding
-        //      https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Trailer
-    }
-
-    for (header, value) in res.headers().iter() {
-        std::io::Write::write_fmt(&mut buf, format_args!("{}: {}\r\n", header.as_str(), value))?
-    }
-
-    std::io::Write::write_fmt(&mut buf, format_args!("\r\n"))?;
-    Ok(Encoder::new(buf, res))
-}
-
 /// The number returned from httparse when the request is HTTP 1.1
 const HTTP_1_1_VERSION: u8 = 1;
 
 /// Decode an HTTP request on the server.
-pub async fn decode<R>(addr: &str, reader: R) -> Result<Option<DecodedRequest>, Exception>
+async fn decode<R>(addr: &str, reader: R) -> Result<Option<DecodedRequest>, Exception>
 where
     R: Read + Unpin + Send + 'static,
 {
@@ -215,35 +228,22 @@ where
         req = req.set_header(header.name, std::str::from_utf8(header.value)?)?;
     }
 
-    // Process the body if `Content-Length` was passed.
-    if let Some(content_length) = httparse_req
-        .headers
-        .iter()
-        .find(|h| h.name.eq_ignore_ascii_case("Content-Length"))
-    {
-        let length = std::str::from_utf8(content_length.value)
-            .ok()
-            .and_then(|s| s.parse::<usize>().ok());
-
-        if let Some(len) = length {
-            req = req.set_body_reader(reader);
-            req = req.set_len(len);
-
-            Ok(Some(DecodedRequest::WithBody(req)))
-        } else {
-            return Err("Invalid value for Content-Length".into());
-        }
-    } else {
-        Ok(Some(DecodedRequest::WithoutBody(req, Box::new(reader))))
-    }
+    // Check for content-length, that determines determines whether we can parse
+    // it with a known length, or need to use chunked encoding.
+    let len = match req.header("Content-Length") {
+        Some(len) => len.parse::<usize>()?,
+        None => return Ok(Some(DecodedRequest::WithoutBody(req, Box::new(reader)))),
+    };
+    req = req.set_body_reader(reader).set_len(len);
+    Ok(Some(DecodedRequest::WithBody(req)))
 }
 
-/// A decoded response
-///
-/// Either a request with body stream OR a request without a
-/// a body stream paired with the underlying stream
-pub enum DecodedRequest {
+/// A decoded request
+enum DecodedRequest {
+    /// The TCP connection is inside the request already, so the lifetimes match up.
     WithBody(Request),
+    /// The TCP connection is *not* inside the request body, so we need to pass
+    /// it along with it to make the lifetimes match up.
     WithoutBody(Request, Box<dyn BufRead + Unpin + Send + 'static>),
 }
 
