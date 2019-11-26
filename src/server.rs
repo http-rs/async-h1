@@ -165,30 +165,45 @@ impl Read for Encoder {
         }
 
         // Read from the AsyncRead impl on the inner Response struct.
-        if !self.body_done {
+        // We must ensure there's space to write at least 2 bytes into the
+        // response stream.
+        if !self.body_done && head_bytes_read < (buf.len() + 1) {
             // figure out how many bytes we can read. If a len was set, we need
             // to make sure we don't read more than that.
             let upper_bound = match self.res.len() {
                 Some(len) => (head_bytes_read + len - self.body_bytes_read).min(buf.len()),
-                None => buf.len(),
+                None => buf.len() - 2,
             };
 
             // Read bytes, and update internal tracking stuff.
             let n = ready!(Pin::new(&mut self.res).poll_read(cx, &mut buf[head_bytes_read..upper_bound]))?;
-            body_bytes_read += n;
-            self.body_bytes_read += n;
+            body_bytes_read += n; // body bytes read on this poll
+            self.body_bytes_read += n; // total body bytes read on all polls
 
-            // If our stream no longer gives bytes, end.
-            if body_bytes_read == 0 {
-                self.body_done = true;
-            }
+            match self.res.len() {
+                Some(len) =>  {
+                    if len == self.body_bytes_read {
+                        self.body_done = true;
+                    }
+                    debug_assert!(self.body_bytes_read <= len, "Too many bytes read. Expected: {}, read: {}", len, self.body_bytes_read);
 
-            // If we know we've read all bytes, end.
-            if let Some(len) = self.res.len() {
-                if len == self.body_bytes_read {
-                    self.body_done = true;
+                    // If our stream no longer gives bytes, end.
+                    if body_bytes_read == 0 {
+                        self.body_done = true;
+                    }
                 }
-                debug_assert!(self.body_bytes_read <= len, "Too many bytes read. Expected: {}, read: {}", len, self.body_bytes_read);
+                None => {
+                    debug_assert!(buf.len() >= 4, "Buffers should be at least 4 bytes long when using chunked encoding");
+
+                    buf[n] = b'\r';
+                    buf[n + 1] = b'\n';
+
+                    if body_bytes_read == 0 {
+                        self.body_done = true;
+                        buf[2] = b'\r';
+                        buf[3] = b'\n';
+                    }
+                }
             }
         }
 
