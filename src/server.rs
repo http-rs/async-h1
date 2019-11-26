@@ -121,9 +121,6 @@ impl Encoder {
             std::io::Write::write_fmt(&mut head, format_args!("Content-Length: {}\r\n", len))?;
         } else {
             std::io::Write::write_fmt(&mut head, format_args!("Transfer-Encoding: chunked\r\n"))?;
-            panic!("chunked encoding is not implemented yet");
-            // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Transfer-Encoding
-            //      https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Trailer
         }
 
         for (header, value) in self.res.headers().iter() {
@@ -150,7 +147,8 @@ impl Read for Encoder {
 
         // Send the headers. As long as the headers aren't fully sent yet we
         // keep sending more of the headers.
-        let mut bytes_read = 0;
+        let mut head_bytes_read = 0;
+        let mut body_bytes_read = 0;
 
         // Read from the serialized headers, url and methods.
         if !self.head_done {
@@ -163,19 +161,39 @@ impl Read for Encoder {
             if self.cursor == head_len {
                 self.head_done = true;
             }
-            bytes_read += len;
+            head_bytes_read += len;
         }
 
         // Read from the AsyncRead impl on the inner Response struct.
         if !self.body_done {
-            let n = ready!(Pin::new(&mut self.res).poll_read(cx, &mut buf[bytes_read..]))?;
-            bytes_read += n;
+            // figure out how many bytes we can read. If a len was set, we need
+            // to make sure we don't read more than that.
+            let upper_bound = match self.res.len() {
+                Some(len) => (head_bytes_read + len - self.body_bytes_read).min(buf.len()),
+                None => buf.len(),
+            };
+
+            // Read bytes, and update internal tracking stuff.
+            let n = ready!(Pin::new(&mut self.res).poll_read(cx, &mut buf[head_bytes_read..upper_bound]))?;
+            body_bytes_read += n;
             self.body_bytes_read += n;
-            if bytes_read == 0 {
+
+            // If our stream no longer gives bytes, end.
+            if body_bytes_read == 0 {
                 self.body_done = true;
+            }
+
+            // If we know we've read all bytes, end.
+            if let Some(len) = self.res.len() {
+                if len == self.body_bytes_read {
+                    self.body_done = true;
+                }
+                debug_assert!(self.body_bytes_read <= len, "Too many bytes read. Expected: {}, read: {}", len, self.body_bytes_read);
             }
         }
 
+        // Return the total amount of bytes read.
+        let bytes_read = head_bytes_read + body_bytes_read;
         Poll::Ready(Ok(bytes_read as usize))
     }
 }
@@ -211,7 +229,6 @@ where
     // Convert our header buf into an httparse instance, and validate.
     let status = httparse_req.parse(&buf)?;
     if status.is_partial() {
-        dbg!(String::from_utf8(buf).unwrap());
         return Err("Malformed HTTP head".into());
     }
 
