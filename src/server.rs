@@ -15,7 +15,8 @@ use std::pin::Pin;
 
 use crate::{Exception, MAX_HEADERS};
 
-pub async fn connect<'a, R, W, F, Fut>(
+pub async fn connect<R, W, F, Fut>(
+    addr: &str,
     reader: R,
     mut writer: W,
     callback: F,
@@ -33,7 +34,7 @@ where
 
     // Decode a request. This may be the first of many since
     // the connection is Keep-Alive by default
-    let decoded = decode(reader).await?;
+    let decoded = decode(addr, reader).await?;
     // Decode returns one of three things;
     // * A request with its body reader set to the underlying TCP stream
     // * A request with an empty body AND the underlying stream
@@ -60,7 +61,7 @@ where
 
             // Decode a new request, timing out if this takes longer than the
             // timeout duration.
-            decoded = match timeout(timeout_duration, decode(to_decode)).await {
+            decoded = match timeout(timeout_duration, decode(addr, to_decode)).await {
                 Ok(Ok(Some(r))) => r,
                 Ok(Ok(None)) | Err(TimeoutError { .. }) => break, /* EOF or timeout */
                 Ok(Err(e)) => return Err(e),
@@ -170,7 +171,7 @@ pub async fn encode(res: Response) -> io::Result<Encoder> {
 const HTTP_1_1_VERSION: u8 = 1;
 
 /// Decode an HTTP request on the server.
-pub async fn decode<R>(reader: R) -> Result<Option<DecodedRequest>, Exception>
+pub async fn decode<R>(addr: &str, reader: R) -> Result<Option<DecodedRequest>, Exception>
 where
     R: Read + Unpin + Send + 'static,
 {
@@ -204,7 +205,7 @@ where
     // Convert httparse headers + body into a `http::Request` type.
     let method = httparse_req.method.ok_or_else(|| "No method found")?;
     let uri = httparse_req.path.ok_or_else(|| "No uri found")?;
-    let uri = url::Url::parse(uri)?;
+    let uri = url::Url::parse(&format!("{}{}", addr, uri))?;
     let version = httparse_req.version.ok_or_else(|| "No version found")?;
     if version != HTTP_1_1_VERSION {
         return Err("Unsupported HTTP version".into());
