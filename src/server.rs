@@ -215,35 +215,22 @@ where
         req = req.set_header(header.name, std::str::from_utf8(header.value)?)?;
     }
 
-    // Process the body if `Content-Length` was passed.
-    if let Some(content_length) = httparse_req
-        .headers
-        .iter()
-        .find(|h| h.name.eq_ignore_ascii_case("Content-Length"))
-    {
-        let length = std::str::from_utf8(content_length.value)
-            .ok()
-            .and_then(|s| s.parse::<usize>().ok());
-
-        if let Some(len) = length {
-            req = req.set_body_reader(reader);
-            req = req.set_len(len);
-
-            Ok(Some(DecodedRequest::WithBody(req)))
-        } else {
-            return Err("Invalid value for Content-Length".into());
-        }
-    } else {
-        Ok(Some(DecodedRequest::WithoutBody(req, Box::new(reader))))
-    }
+    // Check for content-length, that determines determines whether we can parse
+    // it with a known length, or need to use chunked encoding.
+    let len = match req.header("Content-Length") {
+        Some(len) => len.parse::<usize>()?,
+        None => return Ok(Some(DecodedRequest::WithoutBody(req, Box::new(reader)))),
+    };
+    req = req.set_body_reader(reader).set_len(len);
+    Ok(Some(DecodedRequest::WithBody(req)))
 }
 
-/// A decoded response
-///
-/// Either a request with body stream OR a request without a
-/// a body stream paired with the underlying stream
+/// A decoded request
 pub enum DecodedRequest {
+    /// The TCP connection is inside the request already, so the lifetimes match up.
     WithBody(Request),
+    /// The TCP connection is *not* inside the request body, so we need to pass
+    /// it along with it to make the lifetimes match up.
     WithoutBody(Request, Box<dyn BufRead + Unpin + Send + 'static>),
 }
 
