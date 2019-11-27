@@ -13,8 +13,8 @@ use std::time::Duration;
 
 use std::pin::Pin;
 
-use crate::{Exception, MAX_HEADERS};
 use crate::date::fmt_http_date;
+use crate::{Exception, MAX_HEADERS};
 
 pub async fn connect<R, W, F, Fut>(
     addr: &str,
