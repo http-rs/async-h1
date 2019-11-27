@@ -14,7 +14,7 @@ async fn accept(addr: String, stream: TcpStream) -> Result<(), async_h1::Excepti
     // TODO: Delete this line when we implement `Clone` for `TcpStream`.
     let stream = Stream(Arc::new(stream));
 
-    server::connect(&addr, stream.clone(), stream, |_| {
+    server::accept(&addr, stream.clone(), stream, |_| {
         async {
             let resp = Response::new(StatusCode::Ok)
                 .set_header("Content-Type", "text/plain")?

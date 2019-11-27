@@ -15,7 +15,10 @@ use std::pin::Pin;
 
 use crate::{Exception, MAX_HEADERS};
 
-pub async fn connect<R, W, F, Fut>(
+/// Parse an incoming HTTP connection.
+///
+/// Supports `KeepAlive` requests by default.
+pub async fn accept<R, W, F, Fut>(
     addr: &str,
     reader: R,
     mut writer: W,
@@ -80,7 +83,7 @@ where
 ///
 /// This is returned from [`encode`].
 #[derive(Debug)]
-pub struct Encoder {
+struct Encoder {
     /// Keep track how far we've indexed into the headers + body.
     cursor: usize,
     /// HTTP headers to be sent.
