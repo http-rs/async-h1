@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use std::pin::Pin;
 
+use crate::date::fmt_http_date;
 use crate::{Exception, MAX_HEADERS};
 
 pub async fn connect<R, W, F, Fut>(
@@ -158,6 +159,9 @@ pub async fn encode(res: Response) -> io::Result<Encoder> {
         // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Transfer-Encoding
         //      https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Trailer
     }
+
+    let date = fmt_http_date(std::time::SystemTime::now());
+    std::io::Write::write_fmt(&mut buf, format_args!("Date: {}\r\n", date))?;
 
     for (header, value) in res.headers().iter() {
         std::io::Write::write_fmt(&mut buf, format_args!("{}: {}\r\n", header.as_str(), value))?
