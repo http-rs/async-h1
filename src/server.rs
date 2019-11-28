@@ -188,14 +188,12 @@ impl Read for Encoder {
                 None => buf.len() - 2,
             };
 
-            // Read bytes, and update internal tracking stuff.
-            body_bytes_read = ready!(
-                Pin::new(&mut self.res).poll_read(cx, &mut buf[head_bytes_read..upper_bound])
-            )?;
-            self.body_bytes_read += body_bytes_read; // total body bytes read on all polls
-
             match self.res.len() {
                 Some(len) => {
+                    // Read bytes, and update internal tracking stuff.
+                    body_bytes_read = ready!(Pin::new(&mut self.res)
+                        .poll_read(cx, &mut buf[head_bytes_read..upper_bound]))?;
+
                     debug_assert!(
                         self.body_bytes_read <= len,
                         "Too many bytes read. Expected: {}, read: {}",
@@ -208,21 +206,45 @@ impl Read for Encoder {
                     }
                 }
                 None => {
+                    let mut chunk_buf = vec![0; buf.len()];
+                    // Read bytes from body reader
+                    let chunk_length = ready!(Pin::new(&mut self.res)
+                        .poll_read(cx, &mut chunk_buf[0..buf.len() - head_bytes_read]))?;
+
+                    // serialize chunk length as hex
+                    let chunk_length_string = format!("{:X}", chunk_length);
+                    let chunk_length_bytes = chunk_length_string.as_bytes();
+                    let chunk_length_bytes_len = chunk_length_bytes.len();
+                    body_bytes_read += chunk_length_bytes_len;
+                    buf[head_bytes_read..head_bytes_read + body_bytes_read]
+                        .copy_from_slice(chunk_length_bytes);
+
+                    // follow chunk length with CRLF
+                    buf[head_bytes_read + body_bytes_read] = b'\r';
+                    buf[head_bytes_read + body_bytes_read + 1] = b'\n';
+                    body_bytes_read += 2;
+
+                    // copy chunk into buf
+                    buf[head_bytes_read + body_bytes_read
+                        ..head_bytes_read + body_bytes_read + chunk_length]
+                        .copy_from_slice(&chunk_buf[..chunk_length]);
+                    body_bytes_read += chunk_length;
+
                     // TODO: relax this constraint at some point by adding extra state
                     let bytes_read = head_bytes_read + body_bytes_read;
-                    assert!(buf.len() >= bytes_read + 4, "Buffers should have room for the head, the body, and 4 extra bytes when using chunked encoding");
+                    assert!(buf.len() >= bytes_read + 7, "Buffers should have room for the head, the chunk length, 2 bytes, the chunk, and 4 extra bytes when using chunked encoding");
 
-                    buf[bytes_read] = b'\r';
-                    buf[bytes_read + 1] = b'\n';
+                    buf[bytes_read..bytes_read + 7].copy_from_slice(b"\r\n0\r\n\r\n");
 
-                    if body_bytes_read == 0 {
-                        self.body_done = true;
-                        buf[bytes_read + 2] = b'\r';
-                        buf[bytes_read + 3] = b'\n';
-                    }
+                    // if body_bytes_read == 0 {
+                    self.body_done = true;
+                    body_bytes_read += 7;
+                    // }
                 }
             }
         }
+
+        self.body_bytes_read += body_bytes_read; // total body bytes read on all polls
 
         // Return the total amount of bytes read.
         let bytes_read = head_bytes_read + body_bytes_read;

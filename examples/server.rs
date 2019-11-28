@@ -18,7 +18,9 @@ async fn accept(addr: String, stream: TcpStream) -> Result<(), async_h1::Excepti
         async {
             let resp = Response::new(StatusCode::Ok)
                 .set_header("Content-Type", "text/plain")?
-                .set_body_string("Hello, World!".to_string())?;
+                .set_body(io::Cursor::new(vec![
+                    0x48u8, 0x65, 0x6C, 0x6C, 0x6F, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64, 0x21,
+                ]));
             Ok(resp)
         }
     })
