@@ -116,7 +116,10 @@ impl Encoder {
 
         let reason = self.res.status().canonical_reason();
         let status = self.res.status();
-        std::io::Write::write_fmt(&mut head, format_args!("HTTP/1.1 {} {}\r\n", status, reason))?;
+        std::io::Write::write_fmt(
+            &mut head,
+            format_args!("HTTP/1.1 {} {}\r\n", status, reason),
+        )?;
 
         // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
         // send all items in chunks.
@@ -127,7 +130,10 @@ impl Encoder {
         }
 
         for (header, value) in self.res.headers().iter() {
-            std::io::Write::write_fmt(&mut head, format_args!("{}: {}\r\n", header.as_str(), value))?
+            std::io::Write::write_fmt(
+                &mut head,
+                format_args!("{}: {}\r\n", header.as_str(), value),
+            )?
         }
 
         std::io::Write::write_fmt(&mut head, format_args!("\r\n"))?;
@@ -148,8 +154,8 @@ impl Read for Encoder {
             self.encode_head()?;
         }
 
-        // Send the headers. As long as the headers aren't fully sent yet we
-        // keep sending more of the headers.
+        // we must keep track how many bytes of the head and body we've read
+        // in this call of `poll_read`
         let mut head_bytes_read = 0;
         let mut body_bytes_read = 0;
 
@@ -167,44 +173,52 @@ impl Read for Encoder {
             head_bytes_read += len;
         }
 
-        // Read from the AsyncRead impl on the inner Response struct.
+        // Read from the AsyncRead impl on the inner Response struct only if
+        // done reading from the head.
         // We must ensure there's space to write at least 2 bytes into the
         // response stream.
-        if !self.body_done && head_bytes_read < (buf.len() + 1) {
+        if self.head_done && !self.body_done && head_bytes_read <= buf.len() - 2 {
             // figure out how many bytes we can read. If a len was set, we need
             // to make sure we don't read more than that.
             let upper_bound = match self.res.len() {
-                Some(len) => (head_bytes_read + len - self.body_bytes_read).min(buf.len()),
+                Some(len) => {
+                    debug_assert!(head_bytes_read == 0 || self.body_bytes_read == 0);
+                    (head_bytes_read + len - self.body_bytes_read).min(buf.len())
+                }
                 None => buf.len() - 2,
             };
 
             // Read bytes, and update internal tracking stuff.
-            let n = ready!(Pin::new(&mut self.res).poll_read(cx, &mut buf[head_bytes_read..upper_bound]))?;
-            body_bytes_read += n; // body bytes read on this poll
-            self.body_bytes_read += n; // total body bytes read on all polls
+            body_bytes_read = ready!(
+                Pin::new(&mut self.res).poll_read(cx, &mut buf[head_bytes_read..upper_bound])
+            )?;
+            self.body_bytes_read += body_bytes_read; // total body bytes read on all polls
 
             match self.res.len() {
-                Some(len) =>  {
-                    if len == self.body_bytes_read {
-                        self.body_done = true;
-                    }
-                    debug_assert!(self.body_bytes_read <= len, "Too many bytes read. Expected: {}, read: {}", len, self.body_bytes_read);
-
-                    // If our stream no longer gives bytes, end.
-                    if body_bytes_read == 0 {
+                Some(len) => {
+                    debug_assert!(
+                        self.body_bytes_read <= len,
+                        "Too many bytes read. Expected: {}, read: {}",
+                        len,
+                        self.body_bytes_read
+                    );
+                    // If we've read the `len` number of bytes or the stream no longer gives bytes, end.
+                    if len == self.body_bytes_read || body_bytes_read == 0 {
                         self.body_done = true;
                     }
                 }
                 None => {
-                    debug_assert!(buf.len() >= 4, "Buffers should be at least 4 bytes long when using chunked encoding");
+                    // TODO: relax this constraint at some point by adding extra state
+                    let bytes_read = head_bytes_read + body_bytes_read;
+                    assert!(buf.len() >= bytes_read + 4, "Buffers should have room for the head, the body, and 4 extra bytes when using chunked encoding");
 
-                    buf[n] = b'\r';
-                    buf[n + 1] = b'\n';
+                    buf[bytes_read] = b'\r';
+                    buf[bytes_read + 1] = b'\n';
 
                     if body_bytes_read == 0 {
                         self.body_done = true;
-                        buf[2] = b'\r';
-                        buf[3] = b'\n';
+                        buf[bytes_read + 2] = b'\r';
+                        buf[bytes_read + 3] = b'\n';
                     }
                 }
             }
