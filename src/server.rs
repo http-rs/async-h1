@@ -136,10 +136,9 @@ impl Encoder {
         } else {
             std::io::Write::write_fmt(&mut head, format_args!("Transfer-Encoding: chunked\r\n"))?;
         }
-      
-      
+
         let date = fmt_http_date(std::time::SystemTime::now());
-        std::io::Write::write_fmt(&mut buf, format_args!("Date: {}\r\n", date))?;
+        std::io::Write::write_fmt(&mut head, format_args!("Date: {}\r\n", date))?;
 
         for (header, value) in self.res.headers().iter() {
             std::io::Write::write_fmt(
