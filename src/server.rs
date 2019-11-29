@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use std::pin::Pin;
 
+use crate::date::fmt_http_date;
 use crate::{Exception, MAX_HEADERS};
 
 /// Parse an incoming HTTP connection.
@@ -135,6 +136,10 @@ impl Encoder {
         } else {
             std::io::Write::write_fmt(&mut head, format_args!("Transfer-Encoding: chunked\r\n"))?;
         }
+      
+      
+        let date = fmt_http_date(std::time::SystemTime::now());
+        std::io::Write::write_fmt(&mut buf, format_args!("Date: {}\r\n", date))?;
 
         for (header, value) in self.res.headers().iter() {
             std::io::Write::write_fmt(
