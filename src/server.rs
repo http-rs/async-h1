@@ -101,7 +101,11 @@ enum EncoderState {
         body_bytes_read: usize,
         body_len: usize,
     },
-    Chunked,
+    UncomputedChunked,
+    ComputedChunked {
+        chunk: io::Cursor<Vec<u8>>,
+        is_last: bool,
+    },
     Done,
 }
 
@@ -149,13 +153,12 @@ impl Read for Encoder {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut [u8],
+        mut buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         // we must keep track how many bytes of the head and body we've read
         // in this call of `poll_read`
         let mut bytes_read = 0;
         loop {
-            println!("{:?}", self.state);
             match self.state {
                 EncoderState::Start => {
                     // Encode the headers to a buffer, the first time we poll
@@ -181,14 +184,18 @@ impl Read for Encoder {
                     // reading the head and can transition to reading the body
                     if head_bytes_read == head_len {
                         // The response length lets us know if we are encoding
-                        // our body in chunks or now
+                        // our body in chunks or not
                         self.state = match self.res.len() {
                             Some(body_len) => EncoderState::Body {
                                 body_bytes_read: 0,
                                 body_len,
                             },
-                            None => EncoderState::Chunked,
+                            None => EncoderState::UncomputedChunked,
                         };
+                    } else {
+                        // If we haven't read the entire header it means `buf` isn't
+                        // big enough. Break out of loop and return from `poll_read`
+                        break;
                     }
                 }
                 EncoderState::Body {
@@ -203,9 +210,10 @@ impl Read for Encoder {
                     if bytes_read == buf.len() {
                         break;
                     }
-                    // figure out how many bytes we can read
+
+                    // Figure out how many bytes we can read.
                     let upper_bound = (bytes_read + body_len - body_bytes_read).min(buf.len());
-                    // Read bytes, and update internal tracking stuff.
+                    // Read bytes from body
                     let new_body_bytes_read =
                         ready!(Pin::new(&mut self.res)
                             .poll_read(cx, &mut buf[bytes_read..upper_bound]))?;
@@ -220,8 +228,8 @@ impl Read for Encoder {
                         body_len,
                         body_bytes_read
                     );
-                    // If we've read the `len` number of bytes or the stream no longer gives bytes, end.
-                    self.state = if body_len == body_bytes_read || body_bytes_read == 0 {
+                    // If we've read the `len` number of bytes, end
+                    self.state = if body_len == body_bytes_read {
                         EncoderState::Done
                     } else {
                         EncoderState::Body {
@@ -230,15 +238,15 @@ impl Read for Encoder {
                         }
                     };
                 }
-                EncoderState::Chunked => {
-                    // ensure we have at least room for 1 more byte in our buffer
-                    if bytes_read == buf.len() {
-                        break;
-                    }
-
+                EncoderState::UncomputedChunked => {
                     // We can read a maximum of the buffer's total size
                     // minus what we've already filled the buffer with
                     let buffer_remaining = buf.len() - bytes_read;
+
+                    // ensure we have at least room for 1 byte in our buffer
+                    if buffer_remaining == 0 {
+                        break;
+                    }
                     // we must allocate a separate buffer for the chunk data
                     // since we first need to know its length before writing
                     // it into the actual buffer
@@ -282,22 +290,53 @@ impl Read for Encoder {
                         buf[bytes_read] = b'\r';
                         buf[bytes_read + 1] = b'\n';
                         bytes_read += 2;
+
+                        if chunk_length == 0 {
+                            self.state = EncoderState::Done;
+                        }
                     } else {
-                        unimplemented!("TODO: handle when buf isn't big enough");
+                        let mut chunk = vec![0; total_chunk_size];
+                        let mut bytes_written = 0;
+                        // Write the chunk length into the buffer
+                        chunk[0..chunk_length_bytes_len].copy_from_slice(chunk_length_bytes);
+                        bytes_written += chunk_length_bytes_len;
+
+                        // follow chunk length with CRLF
+                        chunk[bytes_written] = b'\r';
+                        chunk[bytes_written + 1] = b'\n';
+                        bytes_written += 2;
+
+                        // copy chunk into buf
+                        chunk[bytes_written..bytes_written + chunk_length]
+                            .copy_from_slice(&chunk_buf[..chunk_length]);
+                        bytes_written += chunk_length;
+
+                        // follow chunk with CRLF
+                        chunk[bytes_written] = b'\r';
+                        chunk[bytes_written + 1] = b'\n';
+                        bytes_read += 2;
+                        self.state = EncoderState::ComputedChunked {
+                            chunk: io::Cursor::new(chunk),
+                            is_last: chunk_length == 0,
+                        };
                     }
-                    const EMPTY_CHUNK: &[u8; 5] = b"0\r\n\r\n";
-
-                    buf[bytes_read..bytes_read + EMPTY_CHUNK.len()].copy_from_slice(EMPTY_CHUNK);
-
-                    // if body_bytes_read == 0 {
-                    bytes_read += 7;
-                    self.state = EncoderState::Done;
-                    // }
+                }
+                EncoderState::ComputedChunked {
+                    ref mut chunk,
+                    is_last,
+                } => {
+                    bytes_read += ready!(Pin::new(chunk).poll_read(cx, &mut buf))?;
+                    if bytes_read == 0 {
+                        self.state = match is_last {
+                            true => EncoderState::Done,
+                            false => EncoderState::UncomputedChunked,
+                        }
+                    }
+                    break;
                 }
                 EncoderState::Done => break,
             }
         }
-        println!("{:?}", std::str::from_utf8(&buf[0..bytes_read]));
 
         Poll::Ready(Ok(bytes_read as usize))
     }
