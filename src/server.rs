@@ -84,18 +84,25 @@ where
 /// This is returned from [`encode`].
 #[derive(Debug)]
 struct Encoder {
-    /// Keep track how far we've indexed into the headers + body.
-    cursor: usize,
     /// HTTP headers to be sent.
-    head: Option<Vec<u8>>,
-    /// Check whether we're done sending headers.
-    head_done: bool,
-    /// Response containing the HTTP body to be sent.
     res: Response,
-    /// Check whether we're done with the body.
-    body_done: bool,
-    /// Keep track of how many bytes have been read from the body stream.
-    body_bytes_read: usize,
+    /// The state of the encoding process
+    state: EncoderState,
+}
+
+#[derive(Debug)]
+enum EncoderState {
+    Start,
+    Head {
+        data: Vec<u8>,
+        head_bytes_read: usize,
+    },
+    Body {
+        body_bytes_read: usize,
+        body_len: usize,
+    },
+    Chunked,
+    Done,
 }
 
 impl Encoder {
@@ -103,15 +110,11 @@ impl Encoder {
     pub(crate) fn encode(res: Response) -> Self {
         Self {
             res,
-            head: None,
-            cursor: 0,
-            head_done: false,
-            body_done: false,
-            body_bytes_read: 0,
+            state: EncoderState::Start,
         }
     }
 
-    fn encode_head(&mut self) -> io::Result<()> {
+    fn encode_head(&self) -> io::Result<Vec<u8>> {
         let mut head: Vec<u8> = vec![];
 
         let reason = self.res.status().canonical_reason();
@@ -138,8 +141,7 @@ impl Encoder {
 
         std::io::Write::write_fmt(&mut head, format_args!("\r\n"))?;
 
-        self.head = Some(head);
-        Ok(())
+        Ok(head)
     }
 }
 
@@ -149,105 +151,154 @@ impl Read for Encoder {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        // Encode the headers to a buffer, the first time we poll
-        if let None = self.head {
-            self.encode_head()?;
-        }
-
         // we must keep track how many bytes of the head and body we've read
         // in this call of `poll_read`
-        let mut head_bytes_read = 0;
-        let mut body_bytes_read = 0;
-
-        // Read from the serialized headers, url and methods.
-        if !self.head_done {
-            let head = self.head.as_ref().unwrap();
-            let head_len = head.len();
-            let len = std::cmp::min(head.len() - self.cursor, buf.len());
-            let range = self.cursor..self.cursor + len;
-            buf[0..len].copy_from_slice(&head[range]);
-            self.cursor += len;
-            if self.cursor == head_len {
-                self.head_done = true;
-            }
-            head_bytes_read += len;
-        }
-
-        // Read from the AsyncRead impl on the inner Response struct only if
-        // done reading from the head.
-        // We must ensure there's space to write at least 2 bytes into the
-        // response stream.
-        if self.head_done && !self.body_done && head_bytes_read <= buf.len() - 2 {
-            // figure out how many bytes we can read. If a len was set, we need
-            // to make sure we don't read more than that.
-            let upper_bound = match self.res.len() {
-                Some(len) => {
-                    debug_assert!(head_bytes_read == 0 || self.body_bytes_read == 0);
-                    (head_bytes_read + len - self.body_bytes_read).min(buf.len())
+        let mut bytes_read = 0;
+        loop {
+            println!("{:?}", self.state);
+            match self.state {
+                EncoderState::Start => {
+                    // Encode the headers to a buffer, the first time we poll
+                    let head = self.encode_head()?;
+                    self.state = EncoderState::Head {
+                        data: head,
+                        head_bytes_read: 0,
+                    };
                 }
-                None => buf.len() - 2,
-            };
+                EncoderState::Head {
+                    ref data,
+                    mut head_bytes_read,
+                } => {
+                    // Read from the serialized headers, url and methods.
+                    let head_len = data.len();
+                    let len = std::cmp::min(head_len - head_bytes_read, buf.len());
+                    let range = head_bytes_read..head_bytes_read + len;
+                    buf[0..len].copy_from_slice(&data[range]);
+                    bytes_read += len;
+                    head_bytes_read += len;
 
-            match self.res.len() {
-                Some(len) => {
-                    // Read bytes, and update internal tracking stuff.
-                    body_bytes_read = ready!(Pin::new(&mut self.res)
-                        .poll_read(cx, &mut buf[head_bytes_read..upper_bound]))?;
-
-                    debug_assert!(
-                        self.body_bytes_read <= len,
-                        "Too many bytes read. Expected: {}, read: {}",
-                        len,
-                        self.body_bytes_read
-                    );
-                    // If we've read the `len` number of bytes or the stream no longer gives bytes, end.
-                    if len == self.body_bytes_read || body_bytes_read == 0 {
-                        self.body_done = true;
+                    // If we've read the total length of the head we're done
+                    // reading the head and can transition to reading the body
+                    if head_bytes_read == head_len {
+                        // The response length lets us know if we are encoding
+                        // our body in chunks or now
+                        self.state = match self.res.len() {
+                            Some(body_len) => EncoderState::Body {
+                                body_bytes_read: 0,
+                                body_len,
+                            },
+                            None => EncoderState::Chunked,
+                        };
                     }
                 }
-                None => {
-                    let mut chunk_buf = vec![0; buf.len()];
+                EncoderState::Body {
+                    mut body_bytes_read,
+                    body_len,
+                } => {
+                    // Double check that we didn't somehow read more bytes than
+                    // can fit in our buffer
+                    debug_assert!(bytes_read <= buf.len());
+
+                    // ensure we have at least room for 1 more byte in our buffer
+                    if bytes_read == buf.len() {
+                        break;
+                    }
+                    // figure out how many bytes we can read
+                    let upper_bound = (bytes_read + body_len - body_bytes_read).min(buf.len());
+                    // Read bytes, and update internal tracking stuff.
+                    let new_body_bytes_read =
+                        ready!(Pin::new(&mut self.res)
+                            .poll_read(cx, &mut buf[bytes_read..upper_bound]))?;
+                    body_bytes_read += new_body_bytes_read;
+                    bytes_read += new_body_bytes_read;
+
+                    // Double check we did not read more body bytes than the total
+                    // length of the body
+                    debug_assert!(
+                        body_bytes_read <= body_len,
+                        "Too many bytes read. Expected: {}, read: {}",
+                        body_len,
+                        body_bytes_read
+                    );
+                    // If we've read the `len` number of bytes or the stream no longer gives bytes, end.
+                    self.state = if body_len == body_bytes_read || body_bytes_read == 0 {
+                        EncoderState::Done
+                    } else {
+                        EncoderState::Body {
+                            body_bytes_read,
+                            body_len,
+                        }
+                    };
+                }
+                EncoderState::Chunked => {
+                    // ensure we have at least room for 1 more byte in our buffer
+                    if bytes_read == buf.len() {
+                        break;
+                    }
+
+                    // We can read a maximum of the buffer's total size
+                    // minus what we've already filled the buffer with
+                    let buffer_remaining = buf.len() - bytes_read;
+                    // we must allocate a separate buffer for the chunk data
+                    // since we first need to know its length before writing
+                    // it into the actual buffer
+                    let mut chunk_buf = vec![0; buffer_remaining];
                     // Read bytes from body reader
-                    let chunk_length = ready!(Pin::new(&mut self.res)
-                        .poll_read(cx, &mut chunk_buf[0..buf.len() - head_bytes_read]))?;
+                    let chunk_length =
+                        ready!(Pin::new(&mut self.res).poll_read(cx, &mut chunk_buf))?;
 
                     // serialize chunk length as hex
                     let chunk_length_string = format!("{:X}", chunk_length);
                     let chunk_length_bytes = chunk_length_string.as_bytes();
                     let chunk_length_bytes_len = chunk_length_bytes.len();
-                    body_bytes_read += chunk_length_bytes_len;
-                    buf[head_bytes_read..head_bytes_read + body_bytes_read]
-                        .copy_from_slice(chunk_length_bytes);
+                    const CRLF_LENGTH: usize = 2;
 
-                    // follow chunk length with CRLF
-                    buf[head_bytes_read + body_bytes_read] = b'\r';
-                    buf[head_bytes_read + body_bytes_read + 1] = b'\n';
-                    body_bytes_read += 2;
+                    // calculate the total size of the chunk including serialized
+                    // length and the CRLF padding
+                    let total_chunk_size = bytes_read
+                        + chunk_length_bytes_len
+                        + CRLF_LENGTH
+                        + chunk_length
+                        + CRLF_LENGTH;
 
-                    // copy chunk into buf
-                    buf[head_bytes_read + body_bytes_read
-                        ..head_bytes_read + body_bytes_read + chunk_length]
-                        .copy_from_slice(&chunk_buf[..chunk_length]);
-                    body_bytes_read += chunk_length;
+                    // See if we can write the chunk out in one go
+                    if total_chunk_size < buffer_remaining {
+                        // Write the chunk length into the buffer
+                        buf[bytes_read..bytes_read + chunk_length_bytes_len]
+                            .copy_from_slice(chunk_length_bytes);
+                        bytes_read += chunk_length_bytes_len;
 
-                    // TODO: relax this constraint at some point by adding extra state
-                    let bytes_read = head_bytes_read + body_bytes_read;
-                    assert!(buf.len() >= bytes_read + 7, "Buffers should have room for the head, the chunk length, 2 bytes, the chunk, and 4 extra bytes when using chunked encoding");
+                        // follow chunk length with CRLF
+                        buf[bytes_read] = b'\r';
+                        buf[bytes_read + 1] = b'\n';
+                        bytes_read += 2;
 
-                    buf[bytes_read..bytes_read + 7].copy_from_slice(b"\r\n0\r\n\r\n");
+                        // copy chunk into buf
+                        buf[bytes_read..bytes_read + chunk_length]
+                            .copy_from_slice(&chunk_buf[..chunk_length]);
+                        bytes_read += chunk_length;
+
+                        // follow chunk with CRLF
+                        buf[bytes_read] = b'\r';
+                        buf[bytes_read + 1] = b'\n';
+                        bytes_read += 2;
+                    } else {
+                        unimplemented!("TODO: handle when buf isn't big enough");
+                    }
+                    const EMPTY_CHUNK: &[u8; 5] = b"0\r\n\r\n";
+
+                    buf[bytes_read..bytes_read + EMPTY_CHUNK.len()].copy_from_slice(EMPTY_CHUNK);
 
                     // if body_bytes_read == 0 {
-                    self.body_done = true;
-                    body_bytes_read += 7;
+                    bytes_read += 7;
+                    self.state = EncoderState::Done;
                     // }
                 }
+                EncoderState::Done => break,
             }
         }
+        println!("{:?}", std::str::from_utf8(&buf[0..bytes_read]));
 
-        self.body_bytes_read += body_bytes_read; // total body bytes read on all polls
-
-        // Return the total amount of bytes read.
-        let bytes_read = head_bytes_read + body_bytes_read;
         Poll::Ready(Ok(bytes_read as usize))
     }
 }
