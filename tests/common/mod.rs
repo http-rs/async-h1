@@ -5,10 +5,22 @@ macro_rules! assert {
     ($actual:expr, $expected:expr, $block:expr) => {
         task::block_on(async {
             $block.await.unwrap();
-            pretty_assertions::assert_eq!(
-                std::str::from_utf8(&$actual).unwrap(),
-                std::str::from_utf8(&$expected).unwrap()
-            );
+            let mut actual = std::string::String::from_utf8($actual).unwrap();
+            let mut expected = std::string::String::from_utf8($expected).unwrap();
+            match expected.find("{DATE}") {
+                Some(i) => {
+                    expected.replace_range(i..i + 6, "");
+                    match expected.get(i..i + 1) {
+                        Some(byte) => {
+                            let j = actual[i..].find(byte).expect("Byte not found");
+                            actual.replace_range(i..i + j, "");
+                        }
+                        None => expected.replace_range(i.., ""),
+                    }
+                }
+                None => {}
+            }
+            pretty_assertions::assert_eq!(actual, expected);
         })
     };
 }
