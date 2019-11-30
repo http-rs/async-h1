@@ -14,11 +14,15 @@ async fn accept(addr: String, stream: TcpStream) -> Result<(), async_h1::Excepti
     // TODO: Delete this line when we implement `Clone` for `TcpStream`.
     let stream = Stream(Arc::new(stream));
 
-    server::connect(&addr, stream.clone(), stream, |_| {
+    server::accept(&addr, stream.clone(), stream, |_| {
         async {
             let resp = Response::new(StatusCode::Ok)
                 .set_header("Content-Type", "text/plain")?
-                .set_body_string("Hello, World!".to_string())?;
+                .set_body_string("Hello".into())?;
+            // To try chunked encoding, replace `set_body_string` with the following method call
+            // .set_body(io::Cursor::new(vec![
+            //     0x48u8, 0x65, 0x6C, 0x6C, 0x6F, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64, 0x21,
+            // ]));
             Ok(resp)
         }
     })
