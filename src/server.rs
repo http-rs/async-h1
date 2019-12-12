@@ -386,16 +386,17 @@ where
     let method = httparse_req.method.ok_or_else(|| "No method found")?;
     let uri = httparse_req.path.ok_or_else(|| "No uri found")?;
     let uri = url::Url::parse(&format!("{}{}", addr, uri))?;
+
     let version = httparse_req.version.ok_or_else(|| "No version found")?;
     if version != HTTP_1_1_VERSION {
         return Err("Unsupported HTTP version".into());
     }
+
     let mut req = Request::new(Method::from_str(method)?, uri);
     for header in httparse_req.headers.iter() {
-        req.insert_header(
-            HeaderName::from_str(header.name)?,
-            HeaderValue::from_str(std::str::from_utf8(header.value)?)?,
-        )?;
+        let name = HeaderName::from_str(header.name)?;
+        let value = HeaderValue::from_str(std::str::from_utf8(header.value)?)?;
+        req.insert_header(name, value)?;
     }
 
     // Check for content-length, that determines determines whether we can parse
@@ -406,6 +407,7 @@ where
     };
     req.set_body(Body::from_reader(reader));
     req.set_len(len);
+
     Ok(Some(DecodedRequest::WithBody(req)))
 }
 

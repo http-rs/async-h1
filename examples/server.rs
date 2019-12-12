@@ -7,10 +7,8 @@ use async_std::io::{self, Read, Write};
 use async_std::net::{self, TcpStream};
 use async_std::prelude::*;
 use async_std::task::{self, Context, Poll};
-use http_types::{
-    headers::{HeaderName, HeaderValue},
-    Response, StatusCode,
-};
+use http_types::headers::{HeaderName, HeaderValue};
+use http_types::{Response, StatusCode};
 
 async fn accept(addr: String, stream: TcpStream) -> Result<(), async_h1::Exception> {
     // println!("starting new connection from {}", stream.peer_addr()?);

@@ -113,10 +113,9 @@ where
     use std::convert::TryFrom;
     let mut res = Response::new(StatusCode::try_from(code)?);
     for header in httparse_res.headers.iter() {
-        res.insert_header(
-            HeaderName::from_str(header.name)?,
-            HeaderValue::from_str(std::str::from_utf8(header.value)?)?,
-        )?;
+        let name = HeaderName::from_str(header.name)?;
+        let value = HeaderValue::from_str(std::str::from_utf8(header.value)?)?;
+        res.insert_header(name, value)?;
     }
 
     // Process the body if `Content-Length` was passed.
