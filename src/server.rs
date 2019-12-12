@@ -6,7 +6,10 @@ use async_std::io::{Read, Write};
 use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
-use http_types::{Method, Request, Response};
+use http_types::{
+    headers::{HeaderName, HeaderValue, CONTENT_TYPE},
+    Body, Method, Request, Response,
+};
 use std::fmt;
 use std::str::FromStr;
 use std::time::Duration;
@@ -140,11 +143,10 @@ impl Encoder {
         let date = fmt_http_date(std::time::SystemTime::now());
         std::io::Write::write_fmt(&mut head, format_args!("Date: {}\r\n", date))?;
 
-        for (header, value) in self.res.headers().iter() {
-            std::io::Write::write_fmt(
-                &mut head,
-                format_args!("{}: {}\r\n", header.as_str(), value),
-            )?
+        for (header, values) in self.res.iter() {
+            for value in values.iter() {
+                std::io::Write::write_fmt(&mut head, format_args!("{}: {}\r\n", header, value))?
+            }
         }
 
         std::io::Write::write_fmt(&mut head, format_args!("\r\n"))?;
@@ -390,16 +392,20 @@ where
     }
     let mut req = Request::new(Method::from_str(method)?, uri);
     for header in httparse_req.headers.iter() {
-        req = req.set_header(header.name, std::str::from_utf8(header.value)?)?;
+        req.insert_header(
+            HeaderName::from_str(header.name)?,
+            HeaderValue::from_str(std::str::from_utf8(header.value)?)?,
+        )?;
     }
 
     // Check for content-length, that determines determines whether we can parse
     // it with a known length, or need to use chunked encoding.
-    let len = match req.header("Content-Length") {
-        Some(len) => len.parse::<usize>()?,
+    let len = match req.header(&CONTENT_TYPE) {
+        Some(len) => len.last().unwrap().as_str().parse::<usize>()?,
         None => return Ok(Some(DecodedRequest::WithoutBody(req, Box::new(reader)))),
     };
-    req = req.set_body_reader(reader).set_len(len);
+    req.set_body(Body::from_reader(reader));
+    req.set_len(len);
     Ok(Some(DecodedRequest::WithBody(req)))
 }
 
@@ -436,7 +442,7 @@ impl DecodedRequest {
     /// When it does not, the underlying body has been passed alongside the request.
     fn into_reader(self) -> Box<dyn BufRead + Unpin + Send + 'static> {
         match self {
-            DecodedRequest::WithBody(r) => r.into_body_reader(),
+            DecodedRequest::WithBody(r) => r.into_body().into_reader(),
             DecodedRequest::WithoutBody(_, s) => s,
         }
     }

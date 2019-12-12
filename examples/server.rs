@@ -1,4 +1,5 @@
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use async_h1::server;
@@ -6,7 +7,10 @@ use async_std::io::{self, Read, Write};
 use async_std::net::{self, TcpStream};
 use async_std::prelude::*;
 use async_std::task::{self, Context, Poll};
-use http_types::{Response, StatusCode};
+use http_types::{
+    headers::{HeaderName, HeaderValue},
+    Response, StatusCode,
+};
 
 async fn accept(addr: String, stream: TcpStream) -> Result<(), async_h1::Exception> {
     // println!("starting new connection from {}", stream.peer_addr()?);
@@ -16,9 +20,12 @@ async fn accept(addr: String, stream: TcpStream) -> Result<(), async_h1::Excepti
 
     server::accept(&addr, stream.clone(), stream, |_| {
         async {
-            let resp = Response::new(StatusCode::Ok)
-                .set_header("Content-Type", "text/plain")?
-                .set_body_string("Hello".into())?;
+            let mut resp = Response::new(StatusCode::Ok);
+            resp.insert_header(
+                HeaderName::from_str("Content-Type")?,
+                HeaderValue::from_str("text/plain")?,
+            )?;
+            resp.set_body("Hello");
             // To try chunked encoding, replace `set_body_string` with the following method call
             // .set_body(io::Cursor::new(vec![
             //     0x48u8, 0x65, 0x6C, 0x6C, 0x6F, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64, 0x21,

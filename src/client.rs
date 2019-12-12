@@ -5,9 +5,13 @@ use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
 use futures_io::AsyncRead;
-use http_types::{Request, Response, StatusCode};
+use http_types::{
+    headers::{HeaderName, HeaderValue, CONTENT_LENGTH},
+    Body, Request, Response, StatusCode,
+};
 
 use std::pin::Pin;
+use std::str::FromStr;
 
 use crate::{Exception, MAX_HEADERS};
 
@@ -58,8 +62,10 @@ pub async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
         // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Transfer-Encoding
         //      https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Trailer
     }
-    for (header, value) in req.headers().iter() {
-        write!(&mut buf, "{}: {}\r\n", header, value).await?;
+    for (header, values) in req.iter() {
+        for value in values.iter() {
+            write!(&mut buf, "{}: {}\r\n", header, value).await?;
+        }
     }
 
     write!(&mut buf, "\r\n").await?;
@@ -107,22 +113,24 @@ where
     use std::convert::TryFrom;
     let mut res = Response::new(StatusCode::try_from(code)?);
     for header in httparse_res.headers.iter() {
-        res = res.set_header(header.name, std::str::from_utf8(header.value)?)?;
+        res.insert_header(
+            HeaderName::from_str(header.name)?,
+            HeaderValue::from_str(std::str::from_utf8(header.value)?)?,
+        )?;
     }
 
     // Process the body if `Content-Length` was passed.
-    if let Some(content_length) = httparse_res
-        .headers
-        .iter()
-        .find(|h| h.name.eq_ignore_ascii_case("Content-Length"))
-    {
-        let length = std::str::from_utf8(content_length.value)
-            .ok()
-            .and_then(|s| s.parse::<usize>().ok());
+    if let Some(content_length) = res.header(&CONTENT_LENGTH) {
+        let length = content_length
+            .last()
+            .unwrap()
+            .as_str()
+            .parse::<usize>()
+            .ok();
 
-        if let Some(_len) = length {
-            // TODO: set size
-            res = res.set_body(reader);
+        if let Some(len) = length {
+            res.set_body(Body::from_reader(reader));
+            res.set_len(len);
         } else {
             return Err("Invalid value for Content-Length".into());
         }
