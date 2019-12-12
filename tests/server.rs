@@ -16,7 +16,11 @@ fn test_basic_request() {
         actual,
         expected,
         server::accept(addr, Cursor::new(request), &mut actual, |_req| {
-            async { Ok(Response::new(StatusCode::Ok).set_body_string("".to_owned())?) }
+            async {
+                let mut resp = Response::new(StatusCode::Ok);
+                resp.set_body("");
+                Ok(resp)
+            }
         })
     );
 }
