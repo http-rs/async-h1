@@ -31,7 +31,7 @@ pub async fn accept<R, W, F, Fut>(
 where
     R: Read + Unpin + Send + 'static,
     W: Write + Unpin,
-    F: Fn(&mut Request) -> Fut,
+    F: for<'a> Fn(&'a mut Request) -> Fut,
     Fut: Future<Output = Result<Response, Exception>>,
 {
     // TODO: make configurable

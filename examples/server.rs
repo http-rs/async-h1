@@ -8,7 +8,7 @@ use async_std::net::{self, TcpStream};
 use async_std::prelude::*;
 use async_std::task::{self, Context, Poll};
 use http_types::headers::{HeaderName, HeaderValue};
-use http_types::{Response, StatusCode};
+use http_types::{Response, StatusCode, Request};
 
 async fn accept(addr: String, stream: TcpStream) -> Result<(), async_h1::Exception> {
     // println!("starting new connection from {}", stream.peer_addr()?);
@@ -16,26 +16,15 @@ async fn accept(addr: String, stream: TcpStream) -> Result<(), async_h1::Excepti
     // TODO: Delete this line when we implement `Clone` for `TcpStream`.
     let stream = Stream(Arc::new(stream));
 
-    server::accept(&addr, stream.clone(), stream, |req| {
-        async {
-            let mut body = vec![];
-            req.read_to_end(&mut body).await?;
+    server::accept(&addr, stream.clone(), stream, endpoint).await
+        // let method = req.method();
+    // async {
+        // Ok("hello world".into())
+    // }}).await
+}
 
-            let mut resp = Response::new(StatusCode::Ok);
-            resp.insert_header(
-                HeaderName::from_str("Content-Type")?,
-                HeaderValue::from_str("text/plain")?,
-            )?;
-            resp.set_body("Hello");
-
-            // To try chunked encoding, replace `set_body_string` with the following method call
-            // .set_body(io::Cursor::new(vec![
-            //     0x48u8, 0x65, 0x6C, 0x6C, 0x6F, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64, 0x21,
-            // ]));
-            Ok(resp)
-        }
-    })
-    .await
+async fn endpoint(req: &mut Request) -> Result<Response, async_h1::Exception> {
+    Ok("hello world".into())
 }
 
 fn main() -> Result<(), async_h1::Exception> {
