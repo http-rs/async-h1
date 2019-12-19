@@ -1,6 +1,5 @@
 mod common;
 use async_h1::server;
-use async_std::io::Cursor;
 use async_std::task;
 use common::read_fixture;
 use http_types::{Response, StatusCode};
@@ -15,7 +14,7 @@ fn test_basic_request() {
     assert!(
         actual,
         expected,
-        server::accept(addr, Cursor::new(request), &mut actual, |_req| {
+        server::accept(addr, request, &mut actual, |_req| {
             async {
                 let mut resp = Response::new(StatusCode::Ok);
                 resp.set_body("");
