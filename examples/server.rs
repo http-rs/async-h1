@@ -16,8 +16,9 @@ async fn accept(addr: String, stream: TcpStream) -> Result<(), async_h1::Excepti
     // TODO: Delete this line when we implement `Clone` for `TcpStream`.
     let stream = Stream(Arc::new(stream));
 
-    server::accept(&addr, stream.clone(), stream, |_| {
-        async {
+    server::accept(&addr, stream.clone(), stream, |req| {
+        async move {
+            dbg!(req.method());
             let mut resp = Response::new(StatusCode::Ok);
             resp.insert_header(
                 HeaderName::from_str("Content-Type")?,

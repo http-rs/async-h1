@@ -1,16 +1,13 @@
 //! Process HTTP connections on the server.
 
 use async_std::future::{timeout, Future, TimeoutError};
-use async_std::io::{self, BufRead, BufReader};
+use async_std::io::{self, BufReader};
 use async_std::io::{Read, Write};
 use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
-use http_types::{
-    headers::{HeaderName, HeaderValue, CONTENT_TYPE},
-    Body, Method, Request, Response,
-};
-use std::fmt;
+use http_types::headers::{HeaderName, HeaderValue, CONTENT_TYPE};
+use http_types::{Body, Method, Request, Response};
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -29,9 +26,9 @@ pub async fn accept<R, W, F, Fut>(
     endpoint: F,
 ) -> Result<(), Exception>
 where
-    R: Read + Unpin + Send + 'static,
+    R: Read + Unpin + Send + 'static + Clone,
     W: Write + Unpin,
-    F: Fn(&mut Request) -> Fut,
+    F: Fn(Request) -> Fut,
     Fut: Future<Output = Result<Response, Exception>>,
 {
     // TODO: make configurable
@@ -39,39 +36,24 @@ where
     const MAX_REQUESTS: usize = 200;
     let mut num_requests = 0;
 
-    // Decode a request. This may be the first of many since
-    // the connection is Keep-Alive by default
-    let decoded = decode(addr, reader).await?;
-    // Decode returns one of three things;
-    // * A request with its body reader set to the underlying TCP stream
-    // * A request with an empty body AND the underlying stream
-    // * No request (because of the stream closed) and no underlying stream
-    if let Some(mut decoded) = decoded {
+    // Decode a request. This may be the first of many since the connection is Keep-Alive by default.
+    let r = reader.clone();
+    let req = decode(addr, r).await?;
+    if let Some(mut req) = req {
         loop {
-            num_requests += 1;
-            if num_requests > MAX_REQUESTS {
-                // We've exceeded the max number of requests per connection
-                return Ok(());
-            }
+            match num_requests {
+                MAX_REQUESTS => return Ok(()),
+                _ => num_requests += 1,
+            };
 
-            // Pass the request to the user defined request handler endpoint.
-            // Encode the response we get back.
             // TODO: what to do when the endpoint returns Err
-            let res = endpoint(decoded.mut_request()).await?;
+            let res = endpoint(req).await?;
             let mut encoder = Encoder::encode(res);
-
-            // If we have reference to the stream, unwrap it. Otherwise,
-            // get the underlying stream from the request
-            let to_decode = decoded.into_reader();
-
-            // Copy the response into the writer
-            // TODO: don't double wrap BufReaders, but instead write a version of
-            // io::copy that expects a BufReader.
             io::copy(&mut encoder, &mut writer).await?;
 
             // Decode a new request, timing out if this takes longer than the
             // timeout duration.
-            decoded = match timeout(timeout_duration, decode(addr, to_decode)).await {
+            req = match timeout(timeout_duration, decode(addr, reader.clone())).await {
                 Ok(Ok(Some(r))) => r,
                 Ok(Ok(None)) | Err(TimeoutError { .. }) => break, /* EOF or timeout */
                 Ok(Err(e)) => return Err(e),
@@ -352,7 +334,7 @@ impl Read for Encoder {
 const HTTP_1_1_VERSION: u8 = 1;
 
 /// Decode an HTTP request on the server.
-async fn decode<R>(addr: &str, reader: R) -> Result<Option<DecodedRequest>, Exception>
+async fn decode<R>(addr: &str, reader: R) -> Result<Option<Request>, Exception>
 where
     R: Read + Unpin + Send + 'static,
 {
@@ -403,49 +385,10 @@ where
     // it with a known length, or need to use chunked encoding.
     let len = match req.header(&CONTENT_TYPE) {
         Some(len) => len.last().unwrap().as_str().parse::<usize>()?,
-        None => return Ok(Some(DecodedRequest::WithoutBody(req, Box::new(reader)))),
+        None => return Ok(Some(req)),
     };
     req.set_body(Body::from_reader(reader));
     req.set_len(len);
 
-    Ok(Some(DecodedRequest::WithBody(req)))
-}
-
-/// A decoded request
-enum DecodedRequest {
-    /// The TCP connection is inside the request already, so the lifetimes match up.
-    WithBody(Request),
-    /// The TCP connection is *not* inside the request body, so we need to pass
-    /// it along with it to make the lifetimes match up.
-    WithoutBody(Request, Box<dyn BufRead + Unpin + Send + 'static>),
-}
-
-impl fmt::Debug for DecodedRequest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            DecodedRequest::WithBody(_) => write!(f, "WithBody"),
-            DecodedRequest::WithoutBody(_, _) => write!(f, "WithoutBody"),
-        }
-    }
-}
-
-impl DecodedRequest {
-    /// Get a mutable reference to the request
-    fn mut_request(&mut self) -> &mut Request {
-        match self {
-            DecodedRequest::WithBody(r) => r,
-            DecodedRequest::WithoutBody(r, _) => r,
-        }
-    }
-
-    /// Consume self and get access to the underlying reader
-    ///
-    /// When the request has a body, the underlying reader is the body.
-    /// When it does not, the underlying body has been passed alongside the request.
-    fn into_reader(self) -> Box<dyn BufRead + Unpin + Send + 'static> {
-        match self {
-            DecodedRequest::WithBody(r) => r.into_body().into_reader(),
-            DecodedRequest::WithoutBody(_, s) => s,
-        }
-    }
+    Ok(Some(req))
 }
