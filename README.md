@@ -1,49 +1,49 @@
-# async-h1
-[![crates.io version][1]][2] [![build status][3]][4]
-[![downloads][5]][6] [![docs.rs docs][7]][8]
+<h1 align="center">async-h1</h1>
+<div align="center">
+  <strong>
+    Asynchronous HTTP/1.1 parser.
+  </strong>
+</div>
 
-Asynchronous HTTP 1.1 parser.
+<br />
 
-- [Documentation][8]
-- [Crates.io][2]
-- [Releases][releases]
+<div align="center">
+  <!-- Crates version -->
+  <a href="https://crates.io/crates/async-h1">
+    <img src="https://img.shields.io/crates/v/async-h1.svg?style=flat-square"
+    alt="Crates.io version" />
+  </a>
+  <!-- Downloads -->
+  <a href="https://crates.io/crates/async-h1">
+    <img src="https://img.shields.io/crates/d/async-h1.svg?style=flat-square"
+      alt="Download" />
+  </a>
+  <!-- docs.rs docs -->
+  <a href="https://docs.rs/async-h1">
+    <img src="https://img.shields.io/badge/docs-latest-blue.svg?style=flat-square"
+      alt="docs.rs docs" />
+  </a>
+</div>
 
-## Examples
-```rust
-// tbi
-```
+<div align="center">
+  <h3>
+    <a href="https://docs.rs/async-h1">
+      API Docs
+    </a>
+    <span> | </span>
+    <a href="https://github.com/http-rs/async-h1/releases">
+      Releases
+    </a>
+    <span> | </span>
+    <a href="https://github.com/http-rs/async-h1/blob/master.github/CONTRIBUTING.md">
+      Contributing
+    </a>
+  </h3>
+</div>
 
 ## Installation
 ```sh
 $ cargo add async-h1
-```
-
-## Profiling
-__build server__
-```sh
-$ cargo build --examples server --release
-```
-
-__profile script__
-```sh
-#!/bin/bash
-set -x
-perf record -F 997 -g "./target/release/examples/server"
-perf script > /tmp/out.perf
-stackcollapse-perf /tmp/out.perf > /tmp/out.folded
-
-outfile="/tmp/$(date +%F-%T)-flamegraph.svg"
-flamegraph /tmp/out.folded > "$outfile"
-# rm perf.data /tmp/out.perf /tmp/out.folded
-
-firefox "$outfile"
-```
-
-__load testing__
-Using [autocannon](https://github.com/mcollina/autocannon) do:
-
-```rust
-$ autocannon localhost:8080 -l
 ```
 
 ## Safety
@@ -57,23 +57,21 @@ look at some of these issues:
 - [Issues labeled "good first issue"][good-first-issue]
 - [Issues labeled "help wanted"][help-wanted]
 
-## Acknowledgements
-This crate wouldn't have been possible without the excellent work done in
-[hyper](https://github.com/hyperium/hyper/blob/b342c38f08972fe8be4ef9844e30f1e7a121bbc4/src/proto/h1/role.rs)
+[contributing]: https://github.com/http-rs/async-h1/blob/master.github/CONTRIBUTING.md
+[good-first-issue]: https://github.com/http-rs/async-h1/labels/good%20first%20issue
+[help-wanted]: https://github.com/http-rs/async-h1/labels/help%20wanted
 
 ## License
-[MIT](./LICENSE-MIT) OR [Apache-2.0](./LICENSE-APACHE)
 
-[1]: https://img.shields.io/crates/v/async-h1.svg?style=flat-square
-[2]: https://crates.io/crates/async-h1
-[3]: https://img.shields.io/travis/rustasync/async-h1/master.svg?style=flat-square
-[4]: https://travis-ci.org/rustasync/async-h1
-[5]: https://img.shields.io/crates/d/async-h1.svg?style=flat-square
-[6]: https://crates.io/crates/async-h1
-[7]: https://img.shields.io/badge/docs-latest-blue.svg?style=flat-square
-[8]: https://docs.rs/async-h1
+<sup>
+Licensed under either of <a href="LICENSE-APACHE">Apache License, Version
+2.0</a> or <a href="LICENSE-MIT">MIT license</a> at your option.
+</sup>
 
-[releases]: https://github.com/rustasync/async-h1/releases
-[contributing]: https://github.com/rustasync/async-h1/blob/master.github/CONTRIBUTING.md
-[good-first-issue]: https://github.com/rustasync/async-h1/labels/good%20first%20issue
-[help-wanted]: https://github.com/rustasync/async-h1/labels/help%20wanted
+<br/>
+
+<sub>
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in this crate by you, as defined in the Apache-2.0 license, shall
+be dual licensed as above, without any additional terms or conditions.
+</sub>
