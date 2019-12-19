@@ -6,7 +6,7 @@ use async_std::io::{Read, Write};
 use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
-use http_types::headers::{HeaderName, HeaderValue, CONTENT_TYPE};
+use http_types::headers::{HeaderName, HeaderValue, CONTENT_LENGTH};
 use http_types::{Body, Method, Request, Response};
 use std::str::FromStr;
 use std::time::Duration;
@@ -383,7 +383,7 @@ where
 
     // Check for content-length, that determines determines whether we can parse
     // it with a known length, or need to use chunked encoding.
-    let len = match req.header(&CONTENT_TYPE) {
+    let len = match req.header(&CONTENT_LENGTH) {
         Some(len) => len.last().unwrap().as_str().parse::<usize>()?,
         None => return Ok(Some(req)),
     };
