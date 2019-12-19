@@ -1,9 +1,11 @@
 use async_std::fs::File;
-use async_std::io::{self, Read, Write};
+use async_std::fs::OpenOptions;
+use async_std::io::{self, Read, SeekFrom, Write};
 use async_std::path::PathBuf;
 use async_std::sync::Arc;
 use async_std::task::{Context, Poll};
 use std::pin::Pin;
+use std::sync::Mutex;
 
 #[macro_export]
 macro_rules! assert {
@@ -11,7 +13,7 @@ macro_rules! assert {
         task::block_on(async {
             use async_std::io::prelude::*;
             $block.await.unwrap();
-            let mut actual = std::string::String::from_utf8($actual).unwrap();
+            let mut actual = $actual.to_string().await;
             let mut expected = std::string::String::new();
             $expected_file.read_to_string(&mut expected).await.unwrap();
             match expected.find("{DATE}") {
@@ -38,11 +40,29 @@ pub async fn read_fixture(name: &str) -> TestFile {
     let file = File::open(directory.join(path))
         .await
         .expect("Reading fixture file didn't work");
-    TestFile(Arc::new(file))
+    let temp = std::env::temp_dir().join("foo.txt");
+    let temp = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(temp)
+        .await
+        .unwrap();
+    TestFile(Arc::new(file), Arc::new(Mutex::new(temp)))
 }
 
 #[derive(Clone)]
-pub struct TestFile(Arc<File>);
+pub struct TestFile(Arc<File>, Arc<Mutex<File>>);
+
+impl TestFile {
+    pub async fn to_string(self) -> String {
+        use async_std::prelude::*;
+        let mut buf = String::new();
+        let mut file = self.1.lock().unwrap();
+        file.seek(SeekFrom::Start(0)).await.unwrap();
+        dbg!(file.read_to_string(&mut buf).await.unwrap());
+        buf
+    }
+}
 
 impl Read for TestFile {
     fn poll_read(
@@ -56,14 +76,14 @@ impl Read for TestFile {
 
 impl Write for TestFile {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<io::Result<usize>> {
-        Pin::new(&mut &*self.0).poll_write(cx, buf)
+        Pin::new(&mut &*self.1.lock().unwrap()).poll_write(cx, buf)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        Pin::new(&mut &*self.0).poll_flush(cx)
+        Pin::new(&mut &*self.1.lock().unwrap()).poll_flush(cx)
     }
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        Pin::new(&mut &*self.0).poll_close(cx)
+        Pin::new(&mut &*self.1.lock().unwrap()).poll_close(cx)
     }
 }
