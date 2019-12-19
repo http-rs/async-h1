@@ -128,8 +128,7 @@ where
             .ok();
 
         if let Some(len) = length {
-            res.set_body(Body::from_reader(reader));
-            res.set_len(len);
+            res.set_body(Body::from_reader(reader, Some(len)));
         } else {
             return Err("Invalid value for Content-Length".into());
         }
