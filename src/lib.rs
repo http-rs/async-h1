@@ -40,7 +40,7 @@ pub use check::check;
 
 mod check;
 
-//pub mod client;
+pub mod client;
 pub mod server;
 
 mod date;
