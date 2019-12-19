@@ -16,7 +16,7 @@ async fn accept(addr: String, stream: TcpStream) -> Result<(), async_h1::Excepti
     // TODO: Delete this line when we implement `Clone` for `TcpStream`.
     let stream = Stream(Arc::new(stream));
 
-    server::accept(&addr, stream.clone(), stream, |req| {
+    server::accept(&addr, stream.clone(), |req| {
         async move {
             dbg!(req.method());
             let mut resp = Response::new(StatusCode::Ok);

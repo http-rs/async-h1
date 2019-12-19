@@ -19,15 +19,9 @@ use crate::{Exception, MAX_HEADERS};
 /// Parse an incoming HTTP connection.
 ///
 /// Supports `KeepAlive` requests by default.
-pub async fn accept<R, W, F, Fut>(
-    addr: &str,
-    reader: R,
-    mut writer: W,
-    endpoint: F,
-) -> Result<(), Exception>
+pub async fn accept<RW, F, Fut>(addr: &str, mut io: RW, endpoint: F) -> Result<(), Exception>
 where
-    R: Read + Unpin + Send + 'static + Clone,
-    W: Write + Unpin,
+    RW: Read + Write + Clone + Send + Unpin + 'static,
     F: Fn(Request) -> Fut,
     Fut: Future<Output = Result<Response, Exception>>,
 {
@@ -37,7 +31,7 @@ where
     let mut num_requests = 0;
 
     // Decode a request. This may be the first of many since the connection is Keep-Alive by default.
-    let r = reader.clone();
+    let r = io.clone();
     let req = decode(addr, r).await?;
     if let Some(mut req) = req {
         loop {
@@ -49,11 +43,11 @@ where
             // TODO: what to do when the endpoint returns Err
             let res = endpoint(req).await?;
             let mut encoder = Encoder::encode(res);
-            io::copy(&mut encoder, &mut writer).await?;
+            io::copy(&mut encoder, &mut io).await?;
 
             // Decode a new request, timing out if this takes longer than the
             // timeout duration.
-            req = match timeout(timeout_duration, decode(addr, reader.clone())).await {
+            req = match timeout(timeout_duration, decode(addr, io.clone())).await {
                 Ok(Ok(Some(r))) => r,
                 Ok(Ok(None)) | Err(TimeoutError { .. }) => break, /* EOF or timeout */
                 Ok(Err(e)) => return Err(e),
