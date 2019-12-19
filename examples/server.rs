@@ -17,7 +17,7 @@ async fn accept(addr: String, stream: TcpStream) -> Result<(), async_h1::Excepti
     let stream = Stream(Arc::new(stream));
 
     server::accept(&addr, stream.clone(), stream, |req| {
-       async move {
+        async move {
             dbg!(req.method());
             let mut resp = Response::new(StatusCode::Ok);
             resp.insert_header(
@@ -30,12 +30,9 @@ async fn accept(addr: String, stream: TcpStream) -> Result<(), async_h1::Excepti
             //     0x48u8, 0x65, 0x6C, 0x6C, 0x6F, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64, 0x21,
             // ]));
             Ok(resp)
-       }
-    }).await
-}
-
-struct Request<'a, T: Read> {
-    body: Pin<Box<&'a T>> // this can be a TcpStream.
+        }
+    })
+    .await
 }
 
 fn main() -> Result<(), async_h1::Exception> {

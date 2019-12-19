@@ -26,9 +26,9 @@ pub async fn accept<R, W, F, Fut>(
     endpoint: F,
 ) -> Result<(), Exception>
 where
-    R: Read + Unpin + Send + Sync + 'static + Clone,
+    R: Read + Unpin + Send + 'static + Clone,
     W: Write + Unpin,
-    F: for<'a> Fn(Request) -> Fut,
+    F: Fn(Request) -> Fut,
     Fut: Future<Output = Result<Response, Exception>>,
 {
     // TODO: make configurable
