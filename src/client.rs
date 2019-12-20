@@ -50,7 +50,17 @@ impl Encoder {
 pub async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
     let mut buf: Vec<u8> = vec![];
 
-    write!(&mut buf, "{} {} HTTP/1.1\r\n", req.method(), req.url(),).await?;
+    let mut url = req.url().path().to_owned();
+    if let Some(fragment) = req.url().fragment() {
+        url.push('#');
+        url.push_str(fragment);
+    }
+    if let Some(query) = req.url().query() {
+        url.push('?');
+        url.push_str(query);
+    }
+
+    write!(&mut buf, "{} {} HTTP/1.1\r\n", req.method(), url).await?;
 
     // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
     // send all items in chunks.

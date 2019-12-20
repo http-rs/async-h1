@@ -10,16 +10,17 @@ use http_types::{Method, Request, Url};
 fn main() -> Result<(), async_h1::Exception> {
     task::block_on(async {
         let stream = net::TcpStream::connect("127.0.0.1:8080").await?;
-        println!("connecting to {}", stream.peer_addr()?);
+        let peer_addr = stream.peer_addr()?;
+        println!("connecting to {}", peer_addr);
 
         // TODO: Delete this line when we implement `Clone` for `TcpStream`.
         let stream = Stream(Arc::new(stream));
 
         for i in 0usize..2 {
             println!("making request {}/2", i + 1);
-
-            let mut req =
-                client::encode(Request::new(Method::Get, Url::parse("/foo").unwrap())).await?;
+            let url = Url::parse(&format!("http://{}/foo", peer_addr)).unwrap();
+            let req = Request::new(Method::Get, dbg!(url));
+            let mut req = client::encode(req).await?;
             io::copy(&mut req, &mut stream.clone()).await?;
 
             // read the response
