@@ -15,21 +15,21 @@ pub struct TestCase {
 }
 
 impl TestCase {
-    pub async fn new(request_file_name: &str, response_file_name: &str) -> TestCase {
-        let request_fixture = File::open(fixture_path(&request_file_name))
+    pub async fn new(request_file_path: &str, response_file_path: &str) -> TestCase {
+        let request_fixture = File::open(fixture_path(&request_file_path))
             .await
             .expect(&format!(
-                "Could not open request fixture file: {}",
-                request_file_name
+                "Could not open request fixture file: {:?}",
+                &fixture_path(request_file_path)
             ));
         let request_fixture = Arc::new(request_fixture);
 
         let response_fixture =
-            File::open(fixture_path(&response_file_name))
+            File::open(fixture_path(&response_file_path))
                 .await
                 .expect(&format!(
-                    "Could not open response fixture file: {}",
-                    response_file_name
+                    "Could not open response fixture file: {:?}",
+                    &fixture_path(response_file_path)
                 ));
         let response_fixture = Arc::new(Mutex::new(response_fixture));
 
@@ -94,10 +94,9 @@ impl TestCase {
     }
 }
 
-fn fixture_path(name: &str) -> PathBuf {
+fn fixture_path(relative_path: &str) -> PathBuf {
     let directory: PathBuf = env!("CARGO_MANIFEST_DIR").into();
-    let relative_path: PathBuf = format!("tests/fixtures/{}.txt", name).into();
-    directory.join(relative_path)
+    directory.join("tests").join(relative_path)
 }
 
 impl Read for TestCase {

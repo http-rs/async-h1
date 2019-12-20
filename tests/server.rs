@@ -7,7 +7,7 @@ use http_types::{Response, StatusCode};
 #[test]
 fn test_basic_request() {
     task::block_on(async {
-        let case = TestCase::new("request1", "response1").await;
+        let case = TestCase::new("fixtures/request1.txt", "fixtures/response1.txt").await;
         let addr = "http://example.com";
 
         server::accept(addr, case.clone(), |_req| async {
