@@ -381,7 +381,8 @@ where
         Some(len) => len.last().unwrap().as_str().parse::<usize>()?,
         None => return Ok(Some(req)),
     };
-    req.set_body(Body::from_reader(reader, Some(len)));
+
+    req.set_body(Body::from_reader(reader.take(len as u64), Some(len)));
 
     Ok(Some(req))
 }
