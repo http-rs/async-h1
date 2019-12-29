@@ -6,15 +6,24 @@ use async_std::io::{Read, Write};
 use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
-use http_types::headers::{HeaderName, HeaderValue, CONTENT_LENGTH};
+use http_types::headers::{HeaderName, HeaderValue, CONTENT_LENGTH, TRANSFER_ENCODING};
 use http_types::{Body, Method, Request, Response};
 use std::str::FromStr;
 use std::time::Duration;
+use thiserror::Error;
 
 use std::pin::Pin;
 
+use crate::chunked::ChunkedDecoder;
 use crate::date::fmt_http_date;
 use crate::{Exception, MAX_HEADERS};
+
+/// Errors when handling incoming requests.
+#[derive(Debug, Error)]
+pub enum HttpError {
+    #[error("unexpected content-length header")]
+    UnexpectedContentLengthHeader,
+}
 
 /// Parse an incoming HTTP connection.
 ///
@@ -375,14 +384,36 @@ where
         req.insert_header(name, value)?;
     }
 
+    let content_length = req.header(&CONTENT_LENGTH);
+    let transfer_encoding = req.header(&TRANSFER_ENCODING);
+
+    if content_length.is_some() && transfer_encoding.is_some() {
+        // This is always an error.
+        return Err(HttpError::UnexpectedContentLengthHeader.into());
+    }
+
+    match transfer_encoding {
+        Some(encoding) if !encoding.is_empty() => {
+            if encoding.last().unwrap().as_str() == "chunked" {
+                req.set_body(Body::from_reader(ChunkedDecoder::new(reader), None));
+                return Ok(Some(req));
+            }
+            // Fall through to Content-Length
+        }
+        _ => {
+            // Fall through to Content-Length
+        }
+    }
+
     // Check for content-length, that determines determines whether we can parse
     // it with a known length, or need to use chunked encoding.
-    let len = match req.header(&CONTENT_LENGTH) {
-        Some(len) => len.last().unwrap().as_str().parse::<usize>()?,
-        None => return Ok(Some(req)),
-    };
-
-    req.set_body(Body::from_reader(reader.take(len as u64), Some(len)));
+    match content_length {
+        Some(len) => {
+            let len = len.last().unwrap().as_str().parse::<usize>()?;
+            req.set_body(Body::from_reader(reader.take(len as u64), Some(len)));
+        }
+        None => {}
+    }
 
     Ok(Some(req))
 }
