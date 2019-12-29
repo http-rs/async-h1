@@ -9,6 +9,8 @@ pin_project_lite::pin_project! {
     }
 }
 
+/// Decodes a chunked body according to
+/// https://tools.ietf.org/html/rfc7230#section-4.1
 impl<R> ChunkedDecoder<R> {
     pub fn new(reader: R) -> Self {
         ChunkedDecoder { reader }
