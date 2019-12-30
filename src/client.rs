@@ -5,13 +5,15 @@ use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
 use http_types::{
-    headers::{HeaderName, HeaderValue, CONTENT_LENGTH},
+    headers::{HeaderName, HeaderValue, CONTENT_LENGTH, TRANSFER_ENCODING},
     Body, Request, Response, StatusCode,
 };
 
 use std::pin::Pin;
 use std::str::FromStr;
 
+use crate::chunked::ChunkedDecoder;
+use crate::error::HttpError;
 use crate::{Exception, MAX_HEADERS};
 
 /// An HTTP encoder.
@@ -60,12 +62,23 @@ pub async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
     }
 
     let val = format!("{} {} HTTP/1.1\r\n", req.method(), url);
+    log::trace!("> {}", &val);
+    buf.write_all(val.as_bytes()).await?;
+
+    let val = format!(
+        "Host: {}\r\n",
+        req.url()
+            .host_str()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Missing hostname"))?
+    );
+    log::trace!("> {}", &val);
     buf.write_all(val.as_bytes()).await?;
 
     // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
     // send all items in chunks.
     if let Some(len) = req.len() {
         let val = format!("Content-Length: {}\r\n", len);
+        log::trace!("> {}", &val);
         buf.write_all(val.as_bytes()).await?;
     } else {
         // write!(&mut buf, "Transfer-Encoding: chunked\r\n")?;
@@ -76,6 +89,7 @@ pub async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
     for (header, values) in req.iter() {
         for value in values.iter() {
             let val = format!("{}: {}\r\n", header, value);
+            log::trace!("> {}", &val);
             buf.write_all(val.as_bytes()).await?;
         }
     }
@@ -131,21 +145,39 @@ where
         res.insert_header(name, value)?;
     }
 
-    // Process the body if `Content-Length` was passed.
-    if let Some(content_length) = res.header(&CONTENT_LENGTH) {
-        let length = content_length
-            .last()
-            .unwrap()
-            .as_str()
-            .parse::<usize>()
-            .ok();
+    let content_length = res.header(&CONTENT_LENGTH);
+    let transfer_encoding = res.header(&TRANSFER_ENCODING);
 
-        if let Some(len) = length {
-            res.set_body(Body::from_reader(reader, Some(len)));
-        } else {
-            return Err("Invalid value for Content-Length".into());
+    if content_length.is_some() && transfer_encoding.is_some() {
+        // This is always an error.
+        return Err(HttpError::UnexpectedContentLengthHeader.into());
+    }
+
+    // Check for Transfer-Encoding
+    match transfer_encoding {
+        Some(encoding) if !encoding.is_empty() => {
+            if encoding.last().unwrap().as_str() == "chunked" {
+                res.set_body(Body::from_reader(
+                    BufReader::new(ChunkedDecoder::new(reader)),
+                    None,
+                ));
+                return Ok(res);
+            }
+            // Fall through to Content-Length
         }
-    };
+        _ => {
+            // Fall through to Content-Length
+        }
+    }
+
+    // Check for Content-Length.
+    match content_length {
+        Some(len) => {
+            let len = len.last().unwrap().as_str().parse::<usize>()?;
+            res.set_body(Body::from_reader(reader.take(len as u64), Some(len)));
+        }
+        None => {}
+    }
 
     // Return the response.
     Ok(res)

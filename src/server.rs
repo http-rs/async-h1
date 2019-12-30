@@ -1,7 +1,5 @@
 //! Process HTTP connections on the server.
 
-use std::error::Error;
-use std::fmt;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::time::Duration;
@@ -17,33 +15,8 @@ use http_types::{Body, Method, Request, Response};
 
 use crate::chunked::ChunkedDecoder;
 use crate::date::fmt_http_date;
+use crate::error::HttpError;
 use crate::{Exception, MAX_HEADERS};
-
-/// Errors when handling incoming requests.
-#[derive(Debug)]
-pub enum HttpError {
-    UnexpectedContentLengthHeader,
-}
-
-impl fmt::Display for HttpError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            HttpError::UnexpectedContentLengthHeader => write!(f, "{}", self.description()),
-        }
-    }
-}
-
-impl Error for HttpError {
-    fn description(&self) -> &str {
-        match self {
-            HttpError::UnexpectedContentLengthHeader => "unexpected content-length header",
-        }
-    }
-
-    fn cause(&self) -> Option<&dyn Error> {
-        None
-    }
-}
 
 /// Parse an incoming HTTP connection.
 ///

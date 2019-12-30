@@ -39,6 +39,9 @@ const MAX_HEADERS: usize = 128;
 pub use check::check;
 
 mod check;
+mod error;
+
+pub use crate::error::HttpError;
 
 pub mod client;
 pub mod server;
