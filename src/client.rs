@@ -65,15 +65,6 @@ pub async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
     log::trace!("> {}", &val);
     buf.write_all(val.as_bytes()).await?;
 
-    let val = format!(
-        "Host: {}\r\n",
-        req.url()
-            .host_str()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Missing hostname"))?
-    );
-    log::trace!("> {}", &val);
-    buf.write_all(val.as_bytes()).await?;
-
     // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
     // send all items in chunks.
     if let Some(len) = req.len() {
