@@ -64,6 +64,7 @@ fn decode_init(buffer: Block<'static>, pos: &Position) -> io::Result<DecodeResul
     use httparse::Status;
     match httparse::parse_chunk_size(&buffer[pos.start..pos.end]) {
         Ok(Status::Complete((used, chunk_len))) => {
+            dbg!((used, chunk_len));
             let new_pos = Position {
                 start: pos.start + used,
                 end: pos.end,
@@ -272,10 +273,12 @@ impl<R: BufRead + Unpin + Send + 'static> Read for ChunkedDecoder<R> {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
+        dbg!("poll_read");
         let this = &mut *self;
 
         let mut n = std::mem::replace(&mut this.current, Position::default());
         let buffer = std::mem::replace(&mut this.buffer, POOL.alloc(INITIAL_CAPACITY));
+        let mut needs_read = true;
 
         let mut buffer = if n.len() > 0 && this.initial_decode {
             match this.poll_read_inner(cx, buffer, &n, buf)? {
@@ -302,6 +305,7 @@ impl<R: BufRead + Unpin + Send + 'static> Read for ChunkedDecoder<R> {
                     }
 
                     n = new_pos;
+                    needs_read = false;
                     buffer
                 }
                 DecodeResult::None(buffer) => buffer,
@@ -311,6 +315,7 @@ impl<R: BufRead + Unpin + Send + 'static> Read for ChunkedDecoder<R> {
         };
 
         loop {
+            dbg!("loop");
             if n.len() >= buffer.capacity() {
                 if buffer.capacity() + 1024 <= MAX_CAPACITY {
                     buffer.realloc(buffer.capacity() + 1024);
@@ -324,20 +329,22 @@ impl<R: BufRead + Unpin + Send + 'static> Read for ChunkedDecoder<R> {
                 }
             }
 
-            let bytes_read = match Pin::new(&mut this.inner).poll_read(cx, &mut buffer[n.end..]) {
-                Poll::Ready(result) => result?,
-                Poll::Pending => {
-                    // if we're here, it means that we need more data but there is none yet,
-                    // so no decoding attempts are necessary until we get more data
-                    this.initial_decode = false;
+            if needs_read {
+                let bytes_read = match Pin::new(&mut this.inner).poll_read(cx, &mut buffer[n.end..])
+                {
+                    Poll::Ready(result) => result?,
+                    Poll::Pending => {
+                        // if we're here, it means that we need more data but there is none yet,
+                        // so no decoding attempts are necessary until we get more data
+                        this.initial_decode = false;
 
-                    std::mem::replace(&mut this.buffer, buffer);
-                    this.current = n;
-                    return Poll::Pending;
-                }
-            };
-            n.end += bytes_read;
-
+                        std::mem::replace(&mut this.buffer, buffer);
+                        this.current = n;
+                        return Poll::Pending;
+                    }
+                };
+                n.end += bytes_read;
+            }
             match this.poll_read_inner(cx, buffer, &n, buf)? {
                 DecodeResult::Some {
                     read,
@@ -364,6 +371,7 @@ impl<R: BufRead + Unpin + Send + 'static> Read for ChunkedDecoder<R> {
                     }
 
                     buffer = new_buffer;
+                    needs_read = false;
                     continue;
                 }
                 DecodeResult::None(buf) => {
