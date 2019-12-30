@@ -1,9 +1,13 @@
-use async_std::io::{self, BufRead, Read};
-use async_std::sync::Arc;
-use byte_pool::{Block, BytePool};
 use std::fmt;
+use std::future::Future;
 use std::pin::Pin;
+use std::str::FromStr;
 use std::task::{Context, Poll};
+
+use async_std::io::{self, BufRead, Read};
+use async_std::sync::{channel, Arc, Receiver, Sender};
+use byte_pool::{Block, BytePool};
+use http_types::headers::{HeaderName, HeaderValue};
 
 const INITIAL_CAPACITY: usize = 1024 * 4;
 const MAX_CAPACITY: usize = 512 * 1024 * 1024; // 512 MiB
@@ -27,11 +31,18 @@ pub struct ChunkedDecoder<R: BufRead> {
     /// Whether we should attempt to decode whatever is currently inside the buffer.
     /// False indicates that we know for certain that the buffer is incomplete.
     initial_decode: bool,
+    /// Current state.
     state: State,
+    /// Trailer channel sender.
+    trailer_sender: Sender<(HeaderName, HeaderValue)>,
+    /// Trailer channel receiver.
+    trailer_receiver: Receiver<(HeaderName, HeaderValue)>,
 }
 
 impl<R: BufRead> ChunkedDecoder<R> {
     pub fn new(inner: R) -> Self {
+        let (sender, receiver) = channel(1);
+
         ChunkedDecoder {
             inner,
             buffer: POOL.alloc(INITIAL_CAPACITY),
@@ -39,7 +50,13 @@ impl<R: BufRead> ChunkedDecoder<R> {
             decode_needs: 0,
             initial_decode: false, // buffer is empty initially, nothing to decode}
             state: State::Init,
+            trailer_sender: sender,
+            trailer_receiver: receiver,
         }
+    }
+
+    pub fn trailer(&self) -> Receiver<(HeaderName, HeaderValue)> {
+        self.trailer_receiver.clone()
     }
 }
 
@@ -78,27 +95,56 @@ fn decode_chunk(
 
     buf[..to_read].copy_from_slice(&buffer[pos.start..pos.start + to_read]);
 
+    dbg!(to_read);
+    dbg!(std::str::from_utf8(&buf[..to_read]));
+
+    let new_pos = Position {
+        start: pos.start + to_read,
+        end: pos.end,
+    };
     let new_state = if left_to_read - to_read > 0 {
         State::Chunk(current + to_read as u64, len)
     } else {
-        State::Init
+        // read one \r\n
+        State::ChunkEnd
     };
 
     Ok(DecodeResult::Some {
         read: to_read,
         buffer,
         new_state,
-        new_pos: Position {
-            start: pos.start + to_read,
-            end: pos.end,
-        },
+        new_pos,
     })
+}
+
+fn decode_chunk_end(
+    buffer: Block<'static>,
+    pos: &Position,
+    buf: &mut [u8],
+) -> io::Result<DecodeResult> {
+    if pos.len() < 2 {
+        return Ok(DecodeResult::None(buffer));
+    }
+
+    if &buffer[pos.start..pos.start + 2] == b"\r\n" {
+        // valid chunk end move on to a new header
+        return decode_init(
+            buffer,
+            &Position {
+                start: pos.start + 2,
+                end: pos.end,
+            },
+            buf,
+        );
+    }
+
+    dbg!(std::str::from_utf8(&buffer[pos.start..pos.end]));
+
+    Err(io::Error::from(io::ErrorKind::InvalidData))
 }
 
 fn decode_trailer(buffer: Block<'static>, pos: &Position) -> io::Result<DecodeResult> {
     use httparse::Status;
-
-    // TODO: find a way to emit the actual read headers
 
     // read headers
     let mut headers = [httparse::EMPTY_HEADER; 16];
@@ -106,11 +152,22 @@ fn decode_trailer(buffer: Block<'static>, pos: &Position) -> io::Result<DecodeRe
     match httparse::parse_headers(&buffer[pos.start..pos.end], &mut headers) {
         Ok(Status::Complete((used, headers))) => {
             dbg!(headers);
-
+            dbg!(used);
+            let headers = headers
+                .iter()
+                .map(|header| {
+                    // TODO: error propagation
+                    let name = HeaderName::from_str(header.name).unwrap();
+                    let value =
+                        HeaderValue::from_str(std::str::from_utf8(header.value).unwrap()).unwrap();
+                    (name, value)
+                })
+                .collect();
+            dbg!(&headers);
             Ok(DecodeResult::Some {
-                read: used,
+                read: 0,
                 buffer,
-                new_state: State::Done,
+                new_state: State::TrailerDone(headers),
                 new_pos: Position {
                     start: pos.start + used,
                     end: pos.end,
@@ -141,6 +198,14 @@ impl<R: BufRead + Unpin + Send + 'static> ChunkedDecoder<R> {
         self.poll_read_inner(cx, buf, |buffer, pos, buf| {
             decode_chunk(buffer, pos, buf, current, len)
         })
+    }
+
+    fn poll_read_chunk_end(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        self.poll_read_inner(cx, buf, decode_chunk_end)
     }
 
     fn poll_read_trailer(
@@ -178,7 +243,11 @@ impl<R: BufRead + Unpin + Send + 'static> ChunkedDecoder<R> {
                     std::mem::replace(&mut this.buffer, buffer);
                     std::mem::replace(&mut this.state, new_state);
                     this.current = new_pos;
-                    return Poll::Ready(Ok(read));
+
+                    if State::Done == this.state || read > 0 {
+                        return Poll::Ready(Ok(read));
+                    }
+                    return Poll::Pending;
                 }
                 DecodeResult::None(buffer) => buffer,
             }
@@ -217,7 +286,7 @@ impl<R: BufRead + Unpin + Send + 'static> ChunkedDecoder<R> {
             match f(buffer, &n, buf)? {
                 DecodeResult::Some {
                     read,
-                    buffer,
+                    buffer: new_buffer,
                     new_pos,
                     new_state,
                 } => {
@@ -228,9 +297,14 @@ impl<R: BufRead + Unpin + Send + 'static> ChunkedDecoder<R> {
                     // to decode it next time
                     this.initial_decode = true;
                     std::mem::replace(&mut this.state, new_state);
-                    std::mem::replace(&mut this.buffer, buffer);
                     this.current = new_pos;
-                    return Poll::Ready(Ok(read));
+                    if State::Done == this.state || read > 0 {
+                        std::mem::replace(&mut this.buffer, new_buffer);
+                        return Poll::Ready(Ok(read));
+                    }
+
+                    buffer = new_buffer;
+                    continue;
                 }
                 DecodeResult::None(buf) => {
                     buffer = buf;
@@ -262,7 +336,7 @@ impl<R: BufRead + Unpin + Send + 'static> ChunkedDecoder<R> {
 impl<R: BufRead + Unpin + Send + 'static> Read for ChunkedDecoder<R> {
     #[allow(missing_doc_code_examples)]
     fn poll_read(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
@@ -275,9 +349,21 @@ impl<R: BufRead + Unpin + Send + 'static> Read for ChunkedDecoder<R> {
                 // reading a chunk
                 self.poll_read_chunk(cx, buf, current, len)
             }
+            State::ChunkEnd => self.poll_read_chunk_end(cx, buf),
             State::Trailer => {
                 // reading the trailer headers
                 self.poll_read_trailer(cx, buf)
+            }
+            State::TrailerDone(ref mut headers) => {
+                dbg!("Done");
+                let headers = std::mem::replace(headers, Vec::new());
+                for (name, value) in headers.into_iter() {
+                    dbg!(&name);
+                    let mut fut = self.trailer_sender.send((name, value));
+                    async_std::task::ready!(unsafe { Pin::new_unchecked(&mut fut) }.poll(cx));
+                }
+                self.state = State::Done;
+                Poll::Ready(Ok(0))
             }
             State::Done => Poll::Ready(Ok(0)),
         }
@@ -317,11 +403,13 @@ enum DecodeResult {
     None(Block<'static>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum State {
     Init,
     Chunk(u64, u64),
+    ChunkEnd,
     Trailer,
+    TrailerDone(Vec<(HeaderName, HeaderValue)>),
     Done,
 }
 
@@ -342,5 +430,71 @@ impl fmt::Debug for DecodeResult {
                 .finish(),
             DecodeResult::None(block) => write!(f, "DecodeResult::None({})", block.len()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_std::prelude::*;
+
+    #[test]
+    fn test_chunked_wiki() {
+        async_std::task::block_on(async move {
+            let input = async_std::io::Cursor::new(
+                "4\r\n\
+                  Wiki\r\n\
+                  5\r\n\
+                  pedia\r\n\
+                  E\r\n in\r\n\
+                  \r\n\
+                  chunks.\r\n\
+                  0\r\n\
+                  \r\n"
+                    .as_bytes(),
+            );
+            let mut decoder = ChunkedDecoder::new(input);
+
+            let mut output = String::new();
+            decoder.read_to_string(&mut output).await.unwrap();
+            assert_eq!(
+                output,
+                "Wikipedia in\r\n\
+                 \r\n\
+                 chunks."
+            );
+        });
+    }
+
+    #[test]
+    fn test_chunked_mdn() {
+        async_std::task::block_on(async move {
+            let input = async_std::io::Cursor::new(
+                "7\r\n\
+                 Mozilla\r\n\
+                 9\r\n\
+                 Developer\r\n\
+                 7\r\n\
+                 Network\r\n\
+                 0\r\n\
+                 Expires: Wed, 21 Oct 2015 07:28:00 GMT\r\n\
+                 \r\n"
+                    .as_bytes(),
+            );
+            let mut decoder = ChunkedDecoder::new(input);
+
+            let mut output = String::new();
+            decoder.read_to_string(&mut output).await.unwrap();
+            assert_eq!(output, "MozillaDeveloperNetwork");
+
+            let trailer = decoder.trailer().recv().await;
+            assert_eq!(
+                trailer,
+                Some((
+                    "Expires".parse().unwrap(),
+                    "Wed, 21 Oct 2015 07:28:00 GMT".parse().unwrap(),
+                ))
+            );
+        });
     }
 }
