@@ -232,8 +232,8 @@ impl<R: BufRead + Unpin + Send + 'static> ChunkedDecoder<R> {
             State::TrailerDone(ref mut headers) => {
                 let headers = std::mem::replace(headers, Vec::new());
                 for (name, value) in headers.into_iter() {
-                    let mut fut = self.trailer_sender.send((name, value));
-                    match unsafe { Pin::new_unchecked(&mut fut) }.poll(cx) {
+                    let mut fut = Box::pin(self.trailer_sender.send((name, value)));
+                    match Pin::new(&mut fut).poll(cx) {
                         Poll::Ready(_) => {}
                         Poll::Pending => {
                             return Ok(DecodeResult::Some {
