@@ -4,7 +4,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::task::{Context, Poll};
 
-use async_std::io::{self, BufRead, Read};
+use async_std::io::{self, Read};
 use async_std::sync::{channel, Arc, Receiver, Sender};
 use byte_pool::{Block, BytePool};
 use http_types::headers::{HeaderName, HeaderValue};
@@ -19,7 +19,7 @@ lazy_static::lazy_static! {
 
 /// Decodes a chunked body according to
 /// https://tools.ietf.org/html/rfc7230#section-4.1
-pub struct ChunkedDecoder<R: BufRead> {
+pub struct ChunkedDecoder<R: Read> {
     /// The underlying stream
     inner: R,
     /// Buffer for the already read, but not yet parsed data.
@@ -37,7 +37,7 @@ pub struct ChunkedDecoder<R: BufRead> {
     trailer_receiver: Receiver<Vec<(HeaderName, HeaderValue)>>,
 }
 
-impl<R: BufRead> ChunkedDecoder<R> {
+impl<R: Read> ChunkedDecoder<R> {
     pub fn new(inner: R) -> Self {
         let (sender, receiver) = channel(1);
 
@@ -152,7 +152,7 @@ fn decode_trailer(buffer: Block<'static>, pos: &Position) -> io::Result<DecodeRe
     }
 }
 
-impl<R: BufRead + Unpin + Send + 'static> ChunkedDecoder<R> {
+impl<R: Read + Unpin> ChunkedDecoder<R> {
     fn poll_read_chunk(
         &mut self,
         cx: &mut Context<'_>,
@@ -277,7 +277,7 @@ impl<R: BufRead + Unpin + Send + 'static> ChunkedDecoder<R> {
     }
 }
 
-impl<R: BufRead + Unpin + Send + 'static> Read for ChunkedDecoder<R> {
+impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
     #[allow(missing_doc_code_examples)]
     fn poll_read(
         mut self: Pin<&mut Self>,

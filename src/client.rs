@@ -59,12 +59,14 @@ pub async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
         url.push_str(query);
     }
 
-    write!(&mut buf, "{} {} HTTP/1.1\r\n", req.method(), url).await?;
+    let val = format!("{} {} HTTP/1.1\r\n", req.method(), url);
+    buf.write_all(val.as_bytes()).await?;
 
     // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
     // send all items in chunks.
     if let Some(len) = req.len() {
-        write!(&mut buf, "Content-Length: {}\r\n", len).await?;
+        let val = format!("Content-Length: {}\r\n", len);
+        buf.write_all(val.as_bytes()).await?;
     } else {
         // write!(&mut buf, "Transfer-Encoding: chunked\r\n")?;
         panic!("chunked encoding is not implemented yet");
@@ -73,18 +75,20 @@ pub async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
     }
     for (header, values) in req.iter() {
         for value in values.iter() {
-            write!(&mut buf, "{}: {}\r\n", header, value).await?;
+            let val = format!("{}: {}\r\n", header, value);
+            buf.write_all(val.as_bytes()).await?;
         }
     }
 
-    write!(&mut buf, "\r\n").await?;
+    buf.write_all(b"\r\n").await?;
+
     Ok(Encoder::new(buf, req))
 }
 
 /// Decode an HTTP respons on the client.
 pub async fn decode<R>(reader: R) -> Result<Response, Exception>
 where
-    R: Read + Unpin + Send + 'static,
+    R: Read + Unpin + Send + Sync + 'static,
 {
     let mut reader = BufReader::new(reader);
     let mut buf = Vec::new();

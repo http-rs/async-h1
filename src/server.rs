@@ -50,7 +50,7 @@ impl Error for HttpError {
 /// Supports `KeepAlive` requests by default.
 pub async fn accept<RW, F, Fut>(addr: &str, mut io: RW, endpoint: F) -> Result<(), Exception>
 where
-    RW: Read + Write + Clone + Send + Unpin + 'static,
+    RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
     F: Fn(Request) -> Fut,
     Fut: Future<Output = Result<Response, Exception>>,
 {
@@ -359,7 +359,7 @@ const HTTP_1_1_VERSION: u8 = 1;
 /// Decode an HTTP request on the server.
 async fn decode<R>(addr: &str, reader: R) -> Result<Option<Request>, Exception>
 where
-    R: Read + Unpin + Send + 'static,
+    R: Read + Unpin + Send + Sync + 'static,
 {
     let mut reader = BufReader::new(reader);
     let mut buf = Vec::new();
