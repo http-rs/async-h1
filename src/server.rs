@@ -392,10 +392,14 @@ where
         return Err(HttpError::UnexpectedContentLengthHeader.into());
     }
 
+    // Check for Transfer-Encoding
     match transfer_encoding {
         Some(encoding) if !encoding.is_empty() => {
             if encoding.last().unwrap().as_str() == "chunked" {
-                req.set_body(Body::from_reader(ChunkedDecoder::new(reader), None));
+                req.set_body(Body::from_reader(
+                    BufReader::new(ChunkedDecoder::new(reader)),
+                    None,
+                ));
                 return Ok(Some(req));
             }
             // Fall through to Content-Length
@@ -405,8 +409,7 @@ where
         }
     }
 
-    // Check for content-length, that determines determines whether we can parse
-    // it with a known length, or need to use chunked encoding.
+    // Check for Content-Length.
     match content_length {
         Some(len) => {
             let len = len.last().unwrap().as_str().parse::<usize>()?;

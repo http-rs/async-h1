@@ -20,6 +20,8 @@ futures-core-preview = "0.3.0-alpha.18"
 http-types = { path = '../http-types' }
 thiserror = "1.0.9"
 pin-project-lite = "0.1.1"
+byte-pool = "0.2.1"
+lazy_static = "1.4.0"
 
 [dev-dependencies]
 futures-util = "0.3.0"
