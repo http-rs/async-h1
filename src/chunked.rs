@@ -58,13 +58,9 @@ impl<R: Read> ChunkedDecoder<R> {
 }
 
 fn decode_init(buffer: Block<'static>, pos: &Position) -> io::Result<DecodeResult> {
-    dbg!(pos);
-    dbg!(std::str::from_utf8(&buffer[pos.start..pos.end]));
-
     use httparse::Status;
     match httparse::parse_chunk_size(&buffer[pos.start..pos.end]) {
         Ok(Status::Complete((used, chunk_len))) => {
-            dbg!((used, chunk_len));
             let new_pos = Position {
                 start: pos.start + used,
                 end: pos.end,
@@ -90,9 +86,6 @@ fn decode_init(buffer: Block<'static>, pos: &Position) -> io::Result<DecodeResul
 }
 
 fn decode_chunk_end(buffer: Block<'static>, pos: &Position) -> io::Result<DecodeResult> {
-    dbg!(pos);
-    dbg!(std::str::from_utf8(&buffer[pos.start..pos.end]));
-
     if pos.len() < 2 {
         return Ok(DecodeResult::None(buffer));
     }
@@ -119,20 +112,17 @@ fn decode_trailer(buffer: Block<'static>, pos: &Position) -> io::Result<DecodeRe
 
     // read headers
     let mut headers = [httparse::EMPTY_HEADER; 16];
-    dbg!(pos);
-    dbg!(std::str::from_utf8(&buffer[pos.start..pos.end]));
 
     match httparse::parse_headers(&buffer[pos.start..pos.end], &mut headers) {
         Ok(Status::Complete((used, headers))) => {
-            dbg!(&headers);
-
             let headers = headers
                 .iter()
                 .map(|header| {
                     // TODO: error propagation
                     let name = HeaderName::from_str(header.name).unwrap();
                     let value =
-                        HeaderValue::from_str(std::str::from_utf8(header.value).unwrap()).unwrap();
+                        HeaderValue::from_str(&std::string::String::from_utf8_lossy(header.value))
+                            .unwrap();
                     (name, value)
                 })
                 .collect();
@@ -162,36 +152,24 @@ impl<R: Read + Unpin> ChunkedDecoder<R> {
         current: u64,
         len: u64,
     ) -> io::Result<DecodeResult> {
-        dbg!("poll_read_chunk");
-        dbg!(pos);
-        dbg!(std::str::from_utf8(&buffer[pos.start..pos.end]));
-        dbg!(len);
-        dbg!(current);
-
         let mut new_pos = pos.clone();
         let remaining = (len - current) as usize;
-        let mut to_read = std::cmp::min(remaining, buf.len());
+        let to_read = std::cmp::min(remaining, buf.len());
 
         let mut new_current = current;
-        let mut start = 0;
+
+        // position into buf
+        let mut read = 0;
 
         // first drain the buffer
         if new_pos.len() > 0 {
             let to_read_buf = std::cmp::min(to_read, pos.len());
-            dbg!(to_read_buf);
-            dbg!(to_read);
-            dbg!(new_pos);
-            dbg!(std::str::from_utf8(
-                &buffer[new_pos.start..new_pos.start + to_read_buf]
-            ));
             buf[..to_read_buf].copy_from_slice(&buffer[new_pos.start..new_pos.start + to_read_buf]);
 
-            // to_read -= to_read_buf;
             new_pos.start += to_read_buf;
             new_current += to_read_buf as u64;
-            // start += to_read_buf;
+            read += to_read_buf;
 
-            let read = new_current as usize - current as usize;
             let new_state = if new_current == len {
                 State::ChunkEnd
             } else {
@@ -207,55 +185,35 @@ impl<R: Read + Unpin> ChunkedDecoder<R> {
             });
         }
 
-        while to_read > 0 {
-            dbg!("poll_read_chunk_loop");
+        match Pin::new(&mut self.inner).poll_read(cx, &mut buf[read..read + to_read]) {
+            Poll::Ready(val) => {
+                let n = val?;
+                new_current += n as u64;
+                read += n;
+                let new_state = if new_current == len {
+                    State::ChunkEnd
+                } else {
+                    State::Chunk(new_current, len)
+                };
 
-            dbg!(to_read);
-            dbg!(start);
-            dbg!(new_pos);
-            dbg!(new_current);
-
-            dbg!("reading");
-            let n = match Pin::new(&mut self.inner).poll_read(cx, &mut buf[start..start + to_read])
-            {
-                Poll::Ready(val) => val?,
-                Poll::Pending => {
-                    dbg!("pending");
-                    return Ok(DecodeResult::Some {
-                        read: 0,
-                        new_state: State::Chunk(new_current, len),
-                        new_pos,
-                        buffer,
-                        pending: true,
-                    });
-                }
-            };
-
-            dbg!(n);
-            to_read -= n;
-            new_current += n as u64;
-            start += n;
+                Ok(DecodeResult::Some {
+                    read,
+                    new_state,
+                    new_pos,
+                    buffer,
+                    pending: false,
+                })
+            }
+            Poll::Pending => {
+                return Ok(DecodeResult::Some {
+                    read: 0,
+                    new_state: State::Chunk(new_current, len),
+                    new_pos,
+                    buffer,
+                    pending: true,
+                });
+            }
         }
-
-        let read = new_current as usize - current as usize;
-        let new_state = if new_current == len {
-            State::ChunkEnd
-        } else {
-            State::Chunk(new_current, len)
-        };
-        dbg!(read);
-        dbg!(&new_state);
-        dbg!(new_current);
-        dbg!(len);
-        dbg!(current);
-
-        Ok(DecodeResult::Some {
-            read,
-            new_state,
-            new_pos,
-            buffer,
-            pending: false,
-        })
     }
 
     fn poll_read_inner(
@@ -265,8 +223,6 @@ impl<R: Read + Unpin> ChunkedDecoder<R> {
         pos: &Position,
         buf: &mut [u8],
     ) -> io::Result<DecodeResult> {
-        dbg!(&self.state);
-
         match self.state {
             State::Init => {
                 // Initial read
@@ -283,12 +239,10 @@ impl<R: Read + Unpin> ChunkedDecoder<R> {
             }
             State::TrailerDone(ref mut headers) => {
                 let headers = std::mem::replace(headers, Vec::new());
-                dbg!("headers send");
                 let mut fut = Box::pin(self.trailer_sender.send(headers));
                 match Pin::new(&mut fut).poll(cx) {
                     Poll::Ready(_) => {}
                     Poll::Pending => {
-                        dbg!("pending send");
                         return Ok(DecodeResult::Some {
                             read: 0,
                             new_state: self.state.clone(),
@@ -325,7 +279,6 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        dbg!("poll_read");
         let this = &mut *self;
 
         let mut n = std::mem::replace(&mut this.current, Position::default());
@@ -336,7 +289,6 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
             true
         };
 
-        dbg!(n);
         let mut buffer = if n.len() > 0 && this.initial_decode {
             match this.poll_read_inner(cx, buffer, &n, buf)? {
                 DecodeResult::Some {
@@ -372,10 +324,8 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
         };
 
         loop {
-            dbg!("loop");
             if n.len() >= buffer.capacity() {
                 if buffer.capacity() + 1024 <= MAX_CAPACITY {
-                    dbg!("resizing buffer");
                     buffer.realloc(buffer.capacity() + 1024);
                 } else {
                     std::mem::replace(&mut this.buffer, buffer);
@@ -388,7 +338,6 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
             }
 
             if needs_read {
-                dbg!("reading");
                 let bytes_read = match Pin::new(&mut this.inner).poll_read(cx, &mut buffer[n.end..])
                 {
                     Poll::Ready(result) => result?,
@@ -402,7 +351,6 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
                         return Poll::Pending;
                     }
                 };
-                dbg!(bytes_read);
                 n.end += bytes_read;
             }
             match this.poll_read_inner(cx, buffer, &n, buf)? {
@@ -413,7 +361,6 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
                     new_state,
                     pending,
                 } => {
-                    dbg!("some");
                     // current buffer might now contain more data inside, so we need to attempt
                     // to decode it next time
                     this.initial_decode = true;
@@ -436,8 +383,6 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
                     continue;
                 }
                 DecodeResult::None(buf) => {
-                    dbg!("none");
-
                     buffer = buf;
 
                     if this.buffer.is_empty() || n.is_zero() {
