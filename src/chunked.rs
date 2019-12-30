@@ -32,9 +32,9 @@ pub struct ChunkedDecoder<R: BufRead> {
     /// Current state.
     state: State,
     /// Trailer channel sender.
-    trailer_sender: Sender<(HeaderName, HeaderValue)>,
+    trailer_sender: Sender<Vec<(HeaderName, HeaderValue)>>,
     /// Trailer channel receiver.
-    trailer_receiver: Receiver<(HeaderName, HeaderValue)>,
+    trailer_receiver: Receiver<Vec<(HeaderName, HeaderValue)>>,
 }
 
 impl<R: BufRead> ChunkedDecoder<R> {
@@ -52,7 +52,7 @@ impl<R: BufRead> ChunkedDecoder<R> {
         }
     }
 
-    pub fn trailer(&self) -> Receiver<(HeaderName, HeaderValue)> {
+    pub fn trailer(&self) -> Receiver<Vec<(HeaderName, HeaderValue)>> {
         self.trailer_receiver.clone()
     }
 }
@@ -124,6 +124,8 @@ fn decode_trailer(buffer: Block<'static>, pos: &Position) -> io::Result<DecodeRe
 
     match httparse::parse_headers(&buffer[pos.start..pos.end], &mut headers) {
         Ok(Status::Complete((used, headers))) => {
+            dbg!(&headers);
+
             let headers = headers
                 .iter()
                 .map(|header| {
@@ -169,18 +171,26 @@ impl<R: BufRead + Unpin + Send + 'static> ChunkedDecoder<R> {
             let remaining = (len - current) as usize;
             let mut to_read = std::cmp::min(remaining, buf.len());
             let mut new_current = current;
+            let mut start = 0;
 
             // first drain the buffer
             if pos.len() > 0 {
                 let to_read_buf = std::cmp::min(to_read, pos.len());
+                dbg!(std::str::from_utf8(&buffer[pos.start..pos.start + to_read_buf]).unwrap());
                 buf[..to_read_buf].copy_from_slice(&buffer[pos.start..pos.start + to_read_buf]);
                 to_read -= to_read_buf;
                 new_pos.start += to_read_buf;
                 new_current += to_read_buf as u64;
+                start += to_read_buf;
             }
 
             if to_read > 0 {
-                let n = match Pin::new(&mut self.inner).poll_read(cx, &mut buf[..to_read]) {
+                dbg!("reading");
+                dbg!(to_read);
+                dbg!(start);
+                let n = match Pin::new(&mut self.inner)
+                    .poll_read(cx, &mut buf[start..start + to_read])
+                {
                     Poll::Ready(val) => val?,
                     Poll::Pending => {
                         return Ok(DecodeResult::Some {
@@ -232,21 +242,22 @@ impl<R: BufRead + Unpin + Send + 'static> ChunkedDecoder<R> {
             }
             State::TrailerDone(ref mut headers) => {
                 let headers = std::mem::replace(headers, Vec::new());
-                for (name, value) in headers.into_iter() {
-                    let mut fut = Box::pin(self.trailer_sender.send((name, value)));
-                    match Pin::new(&mut fut).poll(cx) {
-                        Poll::Ready(_) => {}
-                        Poll::Pending => {
-                            return Ok(DecodeResult::Some {
-                                read: 0,
-                                new_state: self.state.clone(),
-                                new_pos: pos.clone(),
-                                buffer,
-                                pending: true,
-                            });
-                        }
+                dbg!("headers send");
+                let mut fut = Box::pin(self.trailer_sender.send(headers));
+                match Pin::new(&mut fut).poll(cx) {
+                    Poll::Ready(_) => {}
+                    Poll::Pending => {
+                        dbg!("pending send");
+                        return Ok(DecodeResult::Some {
+                            read: 0,
+                            new_state: self.state.clone(),
+                            new_pos: pos.clone(),
+                            buffer,
+                            pending: true,
+                        });
                     }
                 }
+
                 Ok(DecodeResult::Some {
                     read: 0,
                     new_state: State::Done,
@@ -520,10 +531,10 @@ mod tests {
             let trailer = decoder.trailer().recv().await;
             assert_eq!(
                 trailer,
-                Some((
+                Some(vec![(
                     "Expires".parse().unwrap(),
                     "Wed, 21 Oct 2015 07:28:00 GMT".parse().unwrap(),
-                ))
+                )])
             );
         });
     }
