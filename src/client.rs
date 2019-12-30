@@ -1,10 +1,9 @@
 //! Process HTTP connections on the client.
 
-use async_std::io::{self, BufReader};
+use async_std::io::{self, BufReader, Read};
 use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
-use futures_io::AsyncRead;
 use http_types::{
     headers::{HeaderName, HeaderValue, CONTENT_LENGTH},
     Body, Request, Response, StatusCode,
@@ -85,7 +84,7 @@ pub async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
 /// Decode an HTTP respons on the client.
 pub async fn decode<R>(reader: R) -> Result<Response, Exception>
 where
-    R: AsyncRead + Unpin + Send + 'static,
+    R: Read + Unpin + Send + 'static,
 {
     let mut reader = BufReader::new(reader);
     let mut buf = Vec::new();
@@ -148,7 +147,7 @@ where
     Ok(res)
 }
 
-impl AsyncRead for Encoder {
+impl Read for Encoder {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
