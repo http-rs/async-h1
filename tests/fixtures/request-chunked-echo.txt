@@ -1,0 +1,14 @@
+GET / HTTP/1.1
+Host: example.com
+User-Agent: curl/7.54.0
+Content-Type: text/plain
+Transfer-Encoding: chunked
+
+7
+Mozilla
+9
+Developer
+7
+Network
+0
+
