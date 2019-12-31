@@ -1,5 +1,4 @@
 use async_std::fs::File;
-use async_std::fs::OpenOptions;
 use async_std::io::{self, Read, SeekFrom, Write};
 use async_std::path::PathBuf;
 use async_std::sync::Arc;
@@ -33,15 +32,8 @@ impl TestCase {
                 ));
         let response_fixture = Arc::new(Mutex::new(response_fixture));
 
-        let temp = std::env::temp_dir().join("result.txt");
-        let temp = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(temp)
-            .await
-            .expect("Could not read temporary file where response will be written to");
-        let result = Arc::new(Mutex::new(temp));
+        let temp = tempfile::tempfile().expect("Failed to create tempfile");
+        let result = Arc::new(Mutex::new(temp.into()));
 
         TestCase {
             request_fixture,

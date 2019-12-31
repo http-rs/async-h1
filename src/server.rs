@@ -18,6 +18,9 @@ use crate::date::fmt_http_date;
 use crate::error::HttpError;
 use crate::{Exception, MAX_HEADERS};
 
+const CR: u8 = b'\r';
+const LF: u8 = b'\n';
+
 /// Parse an incoming HTTP connection.
 ///
 /// Supports `KeepAlive` requests by default.
@@ -35,6 +38,7 @@ where
     // Decode a request. This may be the first of many since the connection is Keep-Alive by default.
     let r = io.clone();
     let req = decode(addr, r).await?;
+
     if let Some(mut req) = req {
         loop {
             match num_requests {
@@ -113,13 +117,13 @@ impl Encoder {
         // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
         // send all items in chunks.
         if let Some(len) = self.res.len() {
-            std::io::Write::write_fmt(&mut head, format_args!("Content-Length: {}\r\n", len))?;
+            std::io::Write::write_fmt(&mut head, format_args!("content-length: {}\r\n", len))?;
         } else {
-            std::io::Write::write_fmt(&mut head, format_args!("Transfer-Encoding: chunked\r\n"))?;
+            std::io::Write::write_fmt(&mut head, format_args!("transfer-encoding: chunked\r\n"))?;
         }
 
         let date = fmt_http_date(std::time::SystemTime::now());
-        std::io::Write::write_fmt(&mut head, format_args!("Date: {}\r\n", date))?;
+        std::io::Write::write_fmt(&mut head, format_args!("date: {}\r\n", date))?;
 
         for (header, values) in self.res.iter() {
             for value in values.iter() {
@@ -213,14 +217,15 @@ impl Read for Encoder {
                         body_bytes_read
                     );
                     // If we've read the `len` number of bytes, end
-                    self.state = if body_len == body_bytes_read {
-                        EncoderState::Done
+                    if body_len == body_bytes_read {
+                        self.state = EncoderState::Done;
+                        break;
                     } else {
-                        EncoderState::Body {
+                        self.state = EncoderState::Body {
                             body_bytes_read,
                             body_len,
                         }
-                    };
+                    }
                 }
                 EncoderState::UncomputedChunked => {
                     // We can read a maximum of the buffer's total size
@@ -261,8 +266,8 @@ impl Read for Encoder {
                         bytes_read += chunk_length_bytes_len;
 
                         // follow chunk length with CRLF
-                        buf[bytes_read] = b'\r';
-                        buf[bytes_read + 1] = b'\n';
+                        buf[bytes_read] = CR;
+                        buf[bytes_read + 1] = LF;
                         bytes_read += 2;
 
                         // copy chunk into buf
@@ -271,12 +276,13 @@ impl Read for Encoder {
                         bytes_read += chunk_length;
 
                         // follow chunk with CRLF
-                        buf[bytes_read] = b'\r';
-                        buf[bytes_read + 1] = b'\n';
+                        buf[bytes_read] = CR;
+                        buf[bytes_read + 1] = LF;
                         bytes_read += 2;
 
                         if chunk_length == 0 {
                             self.state = EncoderState::Done;
+                            break;
                         }
                     } else {
                         let mut chunk = vec![0; total_chunk_size];
@@ -286,8 +292,8 @@ impl Read for Encoder {
                         bytes_written += chunk_length_bytes_len;
 
                         // follow chunk length with CRLF
-                        chunk[bytes_written] = b'\r';
-                        chunk[bytes_written + 1] = b'\n';
+                        chunk[bytes_written] = CR;
+                        chunk[bytes_written + 1] = LF;
                         bytes_written += 2;
 
                         // copy chunk into buf
@@ -296,8 +302,8 @@ impl Read for Encoder {
                         bytes_written += chunk_length;
 
                         // follow chunk with CRLF
-                        chunk[bytes_written] = b'\r';
-                        chunk[bytes_written + 1] = b'\n';
+                        chunk[bytes_written] = CR;
+                        chunk[bytes_written + 1] = LF;
                         bytes_read += 2;
                         self.state = EncoderState::ComputedChunked {
                             chunk: io::Cursor::new(chunk),
@@ -341,7 +347,7 @@ where
 
     // Keep reading bytes from the stream until we hit the end of the stream.
     loop {
-        let bytes_read = reader.read_until(b'\n', &mut buf).await?;
+        let bytes_read = reader.read_until(LF, &mut buf).await?;
         // No more bytes are yielded from the stream.
         if bytes_read == 0 {
             return Ok(None);

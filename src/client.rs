@@ -68,7 +68,7 @@ pub async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
     // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
     // send all items in chunks.
     if let Some(len) = req.len() {
-        let val = format!("Content-Length: {}\r\n", len);
+        let val = format!("content-length: {}\r\n", len);
         log::trace!("> {}", &val);
         buf.write_all(val.as_bytes()).await?;
     } else {
