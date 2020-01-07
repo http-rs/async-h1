@@ -19,7 +19,7 @@ lazy_static::lazy_static! {
 
 /// Decodes a chunked body according to
 /// https://tools.ietf.org/html/rfc7230#section-4.1
-pub struct ChunkedDecoder<R: Read> {
+pub(crate) struct ChunkedDecoder<R: Read> {
     /// The underlying stream
     inner: R,
     /// Buffer for the already read, but not yet parsed data.
@@ -38,7 +38,7 @@ pub struct ChunkedDecoder<R: Read> {
 }
 
 impl<R: Read> ChunkedDecoder<R> {
-    pub fn new(inner: R) -> Self {
+    pub(crate) fn new(inner: R) -> Self {
         let (sender, receiver) = channel(1);
 
         ChunkedDecoder {
@@ -52,93 +52,8 @@ impl<R: Read> ChunkedDecoder<R> {
         }
     }
 
-    pub fn trailer(&self) -> Receiver<Vec<(HeaderName, HeaderValue)>> {
+    pub(crate) fn trailer(&self) -> Receiver<Vec<(HeaderName, HeaderValue)>> {
         self.trailer_receiver.clone()
-    }
-}
-
-fn decode_init(buffer: Block<'static>, pos: &Position) -> io::Result<DecodeResult> {
-    use httparse::Status;
-    match httparse::parse_chunk_size(&buffer[pos.start..pos.end]) {
-        Ok(Status::Complete((used, chunk_len))) => {
-            let new_pos = Position {
-                start: pos.start + used,
-                end: pos.end,
-            };
-
-            let new_state = if chunk_len == 0 {
-                State::Trailer
-            } else {
-                State::Chunk(0, chunk_len)
-            };
-
-            Ok(DecodeResult::Some {
-                read: 0,
-                buffer,
-                new_pos,
-                new_state,
-                pending: false,
-            })
-        }
-        Ok(Status::Partial) => Ok(DecodeResult::None(buffer)),
-        Err(err) => Err(io::Error::new(io::ErrorKind::Other, err.to_string())),
-    }
-}
-
-fn decode_chunk_end(buffer: Block<'static>, pos: &Position) -> io::Result<DecodeResult> {
-    if pos.len() < 2 {
-        return Ok(DecodeResult::None(buffer));
-    }
-
-    if &buffer[pos.start..pos.start + 2] == b"\r\n" {
-        // valid chunk end move on to a new header
-        return Ok(DecodeResult::Some {
-            read: 0,
-            buffer,
-            new_pos: Position {
-                start: pos.start + 2,
-                end: pos.end,
-            },
-            new_state: State::Init,
-            pending: false,
-        });
-    }
-
-    Err(io::Error::from(io::ErrorKind::InvalidData))
-}
-
-fn decode_trailer(buffer: Block<'static>, pos: &Position) -> io::Result<DecodeResult> {
-    use httparse::Status;
-
-    // read headers
-    let mut headers = [httparse::EMPTY_HEADER; 16];
-
-    match httparse::parse_headers(&buffer[pos.start..pos.end], &mut headers) {
-        Ok(Status::Complete((used, headers))) => {
-            let headers = headers
-                .iter()
-                .map(|header| {
-                    // TODO: error propagation
-                    let name = HeaderName::from_str(header.name).unwrap();
-                    let value =
-                        HeaderValue::from_str(&std::string::String::from_utf8_lossy(header.value))
-                            .unwrap();
-                    (name, value)
-                })
-                .collect();
-            Ok(DecodeResult::Some {
-                read: 0,
-                buffer,
-                new_state: State::TrailerDone(headers),
-                new_pos: Position {
-                    start: pos.start + used,
-                    end: pos.end,
-                },
-                pending: false,
-            })
-        }
-        Ok(Status::Partial) => Ok(DecodeResult::None(buffer)),
-        Err(err) => Err(io::Error::new(io::ErrorKind::Other, err.to_string())),
     }
 }
 
@@ -299,17 +214,17 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
                     pending,
                 } => {
                     this.current = new_pos.clone();
-                    std::mem::replace(&mut this.state, new_state);
+                    this.state = new_state;
 
                     if pending {
                         // initial_decode is still true
-                        std::mem::replace(&mut this.buffer, buffer);
+                        this.buffer = buffer;
                         return Poll::Pending;
                     }
 
                     if State::Done == this.state || read > 0 {
                         // initial_decode is still true
-                        std::mem::replace(&mut this.buffer, buffer);
+                        this.buffer = buffer;
                         return Poll::Ready(Ok(read));
                     }
 
@@ -328,7 +243,7 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
                 if buffer.capacity() + 1024 <= MAX_CAPACITY {
                     buffer.realloc(buffer.capacity() + 1024);
                 } else {
-                    std::mem::replace(&mut this.buffer, buffer);
+                    this.buffer = buffer;
                     this.current = n;
                     return Poll::Ready(Err(io::Error::new(
                         io::ErrorKind::Other,
@@ -345,8 +260,7 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
                         // if we're here, it means that we need more data but there is none yet,
                         // so no decoding attempts are necessary until we get more data
                         this.initial_decode = false;
-
-                        std::mem::replace(&mut this.buffer, buffer);
+                        this.buffer = buffer;
                         this.current = n;
                         return Poll::Pending;
                     }
@@ -364,17 +278,17 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
                     // current buffer might now contain more data inside, so we need to attempt
                     // to decode it next time
                     this.initial_decode = true;
-                    std::mem::replace(&mut this.state, new_state);
+                    this.state = new_state;
                     this.current = new_pos;
                     n = new_pos;
 
                     if State::Done == this.state || read > 0 {
-                        std::mem::replace(&mut this.buffer, new_buffer);
+                        this.buffer = new_buffer;
                         return Poll::Ready(Ok(read));
                     }
 
                     if pending {
-                        std::mem::replace(&mut this.buffer, new_buffer);
+                        this.buffer = new_buffer;
                         return Poll::Pending;
                     }
 
@@ -388,8 +302,7 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
                     if this.buffer.is_empty() || n.is_zero() {
                         // "logical buffer" is empty, there is nothing to decode on the next step
                         this.initial_decode = false;
-
-                        std::mem::replace(&mut this.buffer, buffer);
+                        this.buffer = buffer;
                         this.current = n;
 
                         return Poll::Ready(Ok(0));
@@ -461,6 +374,91 @@ impl fmt::Debug for DecodeResult {
                 .finish(),
             DecodeResult::None(block) => write!(f, "DecodeResult::None({})", block.len()),
         }
+    }
+}
+
+fn decode_init(buffer: Block<'static>, pos: &Position) -> io::Result<DecodeResult> {
+    use httparse::Status;
+    match httparse::parse_chunk_size(&buffer[pos.start..pos.end]) {
+        Ok(Status::Complete((used, chunk_len))) => {
+            let new_pos = Position {
+                start: pos.start + used,
+                end: pos.end,
+            };
+
+            let new_state = if chunk_len == 0 {
+                State::Trailer
+            } else {
+                State::Chunk(0, chunk_len)
+            };
+
+            Ok(DecodeResult::Some {
+                read: 0,
+                buffer,
+                new_pos,
+                new_state,
+                pending: false,
+            })
+        }
+        Ok(Status::Partial) => Ok(DecodeResult::None(buffer)),
+        Err(err) => Err(io::Error::new(io::ErrorKind::Other, err.to_string())),
+    }
+}
+
+fn decode_chunk_end(buffer: Block<'static>, pos: &Position) -> io::Result<DecodeResult> {
+    if pos.len() < 2 {
+        return Ok(DecodeResult::None(buffer));
+    }
+
+    if &buffer[pos.start..pos.start + 2] == b"\r\n" {
+        // valid chunk end move on to a new header
+        return Ok(DecodeResult::Some {
+            read: 0,
+            buffer,
+            new_pos: Position {
+                start: pos.start + 2,
+                end: pos.end,
+            },
+            new_state: State::Init,
+            pending: false,
+        });
+    }
+
+    Err(io::Error::from(io::ErrorKind::InvalidData))
+}
+
+fn decode_trailer(buffer: Block<'static>, pos: &Position) -> io::Result<DecodeResult> {
+    use httparse::Status;
+
+    // read headers
+    let mut headers = [httparse::EMPTY_HEADER; 16];
+
+    match httparse::parse_headers(&buffer[pos.start..pos.end], &mut headers) {
+        Ok(Status::Complete((used, headers))) => {
+            let headers = headers
+                .iter()
+                .map(|header| {
+                    // TODO: error propagation
+                    let name = HeaderName::from_str(header.name).unwrap();
+                    let value =
+                        HeaderValue::from_str(&std::string::String::from_utf8_lossy(header.value))
+                            .unwrap();
+                    (name, value)
+                })
+                .collect();
+            Ok(DecodeResult::Some {
+                read: 0,
+                buffer,
+                new_state: State::TrailerDone(headers),
+                new_pos: Position {
+                    start: pos.start + used,
+                    end: pos.end,
+                },
+                pending: false,
+            })
+        }
+        Ok(Status::Partial) => Ok(DecodeResult::None(buffer)),
+        Err(err) => Err(io::Error::new(io::ErrorKind::Other, err.to_string())),
     }
 }
 

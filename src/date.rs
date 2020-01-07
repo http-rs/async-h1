@@ -37,14 +37,14 @@ pub struct HttpDate {
 /// Supports the preferred IMF-fixdate and the legacy RFC 805 and
 /// ascdate formats. Two digit years are mapped to dates between
 /// 1970 and 2069.
-pub fn parse_http_date(s: &str) -> Result<SystemTime, Exception> {
+pub(crate) fn parse_http_date(s: &str) -> Result<SystemTime, Exception> {
     s.parse::<HttpDate>().map(|d| d.into())
 }
 
 /// Format a date to be used in a HTTP header field.
 ///
 /// Dates are formatted as IMF-fixdate: `Fri, 15 May 2015 15:34:21 GMT`.
-pub fn fmt_http_date(d: SystemTime) -> String {
+pub(crate) fn fmt_http_date(d: SystemTime) -> String {
     format!("{}", HttpDate::from(d))
 }
 
