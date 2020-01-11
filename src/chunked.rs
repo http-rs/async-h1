@@ -1,5 +1,6 @@
 use std::fmt;
 use std::future::Future;
+use std::ops::Range;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::task::{Context, Poll};
@@ -24,8 +25,8 @@ pub(crate) struct ChunkedDecoder<R: Read> {
     inner: R,
     /// Buffer for the already read, but not yet parsed data.
     buffer: Block<'static>,
-    /// Position of valid read data into buffer.
-    current: Position,
+    /// Range of valid read data into buffer.
+    current: Range<usize>,
     /// Whether we should attempt to decode whatever is currently inside the buffer.
     /// False indicates that we know for certain that the buffer is incomplete.
     initial_decode: bool,
@@ -44,7 +45,7 @@ impl<R: Read> ChunkedDecoder<R> {
         ChunkedDecoder {
             inner,
             buffer: POOL.alloc(INITIAL_CAPACITY),
-            current: Position::default(),
+            current: Range { start: 0, end: 0 },
             initial_decode: false, // buffer is empty initially, nothing to decode}
             state: State::Init,
             trailer_sender: sender,
@@ -62,7 +63,7 @@ impl<R: Read + Unpin> ChunkedDecoder<R> {
         &mut self,
         cx: &mut Context<'_>,
         buffer: Block<'static>,
-        pos: &Position,
+        pos: &Range<usize>,
         buf: &mut [u8],
         current: u64,
         len: u64,
@@ -100,6 +101,7 @@ impl<R: Read + Unpin> ChunkedDecoder<R> {
             });
         }
 
+        // attempt to fill the buffer
         match Pin::new(&mut self.inner).poll_read(cx, &mut buf[read..read + to_read]) {
             Poll::Ready(val) => {
                 let n = val?;
@@ -135,7 +137,7 @@ impl<R: Read + Unpin> ChunkedDecoder<R> {
         &mut self,
         cx: &mut Context<'_>,
         buffer: Block<'static>,
-        pos: &Position,
+        pos: &Range<usize>,
         buf: &mut [u8],
     ) -> io::Result<DecodeResult> {
         match self.state {
@@ -196,7 +198,7 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
     ) -> Poll<io::Result<usize>> {
         let this = &mut *self;
 
-        let mut n = std::mem::replace(&mut this.current, Position::default());
+        let mut n = std::mem::replace(&mut this.current, 0..0);
         let buffer = std::mem::replace(&mut this.buffer, POOL.alloc(INITIAL_CAPACITY));
         let mut needs_read = if let State::Chunk(_, _) = this.state {
             false // Do not attempt to fill the buffer when we are reading a chunk
@@ -205,6 +207,7 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
         };
 
         let mut buffer = if n.len() > 0 && this.initial_decode {
+            // initial buffer filling, if needed
             match this.poll_read_inner(cx, buffer, &n, buf)? {
                 DecodeResult::Some {
                     read,
@@ -279,7 +282,7 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
                     // to decode it next time
                     this.initial_decode = true;
                     this.state = new_state;
-                    this.current = new_pos;
+                    this.current = new_pos.clone();
                     n = new_pos;
 
                     if State::Done == this.state || read > 0 {
@@ -299,7 +302,7 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
                 DecodeResult::None(buf) => {
                     buffer = buf;
 
-                    if this.buffer.is_empty() || n.is_zero() {
+                    if this.buffer.is_empty() || n.start == 0 && n.end == 0 {
                         // "logical buffer" is empty, there is nothing to decode on the next step
                         this.initial_decode = false;
                         this.buffer = buffer;
@@ -315,43 +318,39 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
     }
 }
 
-/// A semantically explicit slice of a buffer.
-#[derive(Eq, PartialEq, Debug, Copy, Clone, Default)]
-struct Position {
-    start: usize,
-    end: usize,
-}
-
-impl Position {
-    fn len(&self) -> usize {
-        self.end - self.start
-    }
-
-    fn is_zero(&self) -> bool {
-        self.start == 0 && self.end == 0
-    }
-}
-
+/// Possible return values from calling `decode` methods.
 enum DecodeResult {
+    /// Something was decoded successfully.
     Some {
-        /// How much was read
+        /// How much data was read.
         read: usize,
-        /// Remaining data.
+        /// The passed in block returned.
         buffer: Block<'static>,
-        new_pos: Position,
+        /// The new range of valid data in `buffer`.
+        new_pos: Range<usize>,
+        /// The new state.
         new_state: State,
+        /// Should poll return `Pending`.
         pending: bool,
     },
+    /// Nothing was decoded.
     None(Block<'static>),
 }
 
+/// Decoder state.
 #[derive(Debug, PartialEq, Clone)]
 enum State {
+    /// Initial state.
     Init,
+    /// Decoding a chunk, first value is the current position, second value is the length of the chunk.
     Chunk(u64, u64),
+    /// Decoding the end part of a chunk.
     ChunkEnd,
+    /// Decoding trailers.
     Trailer,
+    /// Trailers were decoded, are now set to the decoded trailers.
     TrailerDone(Vec<(HeaderName, HeaderValue)>),
+    /// All is said and done.
     Done,
 }
 
@@ -377,11 +376,11 @@ impl fmt::Debug for DecodeResult {
     }
 }
 
-fn decode_init(buffer: Block<'static>, pos: &Position) -> io::Result<DecodeResult> {
+fn decode_init(buffer: Block<'static>, pos: &Range<usize>) -> io::Result<DecodeResult> {
     use httparse::Status;
     match httparse::parse_chunk_size(&buffer[pos.start..pos.end]) {
         Ok(Status::Complete((used, chunk_len))) => {
-            let new_pos = Position {
+            let new_pos = Range {
                 start: pos.start + used,
                 end: pos.end,
             };
@@ -405,7 +404,7 @@ fn decode_init(buffer: Block<'static>, pos: &Position) -> io::Result<DecodeResul
     }
 }
 
-fn decode_chunk_end(buffer: Block<'static>, pos: &Position) -> io::Result<DecodeResult> {
+fn decode_chunk_end(buffer: Block<'static>, pos: &Range<usize>) -> io::Result<DecodeResult> {
     if pos.len() < 2 {
         return Ok(DecodeResult::None(buffer));
     }
@@ -415,7 +414,7 @@ fn decode_chunk_end(buffer: Block<'static>, pos: &Position) -> io::Result<Decode
         return Ok(DecodeResult::Some {
             read: 0,
             buffer,
-            new_pos: Position {
+            new_pos: Range {
                 start: pos.start + 2,
                 end: pos.end,
             },
@@ -427,7 +426,7 @@ fn decode_chunk_end(buffer: Block<'static>, pos: &Position) -> io::Result<Decode
     Err(io::Error::from(io::ErrorKind::InvalidData))
 }
 
-fn decode_trailer(buffer: Block<'static>, pos: &Position) -> io::Result<DecodeResult> {
+fn decode_trailer(buffer: Block<'static>, pos: &Range<usize>) -> io::Result<DecodeResult> {
     use httparse::Status;
 
     // read headers
@@ -450,7 +449,7 @@ fn decode_trailer(buffer: Block<'static>, pos: &Position) -> io::Result<DecodeRe
                 read: 0,
                 buffer,
                 new_state: State::TrailerDone(headers),
-                new_pos: Position {
+                new_pos: Range {
                     start: pos.start + used,
                     end: pos.end,
                 },
