@@ -1,27 +1,32 @@
 //! Process HTTP connections on the server.
 
+use std::pin::Pin;
+use std::str::FromStr;
+use std::time::Duration;
+
 use async_std::future::{timeout, Future, TimeoutError};
 use async_std::io::{self, BufReader};
 use async_std::io::{Read, Write};
 use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
-use http_types::headers::{HeaderName, HeaderValue, CONTENT_LENGTH};
+use http_types::headers::{HeaderName, HeaderValue, CONTENT_LENGTH, TRANSFER_ENCODING};
 use http_types::{Body, Method, Request, Response};
-use std::str::FromStr;
-use std::time::Duration;
 
-use std::pin::Pin;
-
+use crate::chunked::ChunkedDecoder;
 use crate::date::fmt_http_date;
+use crate::error::HttpError;
 use crate::{Exception, MAX_HEADERS};
+
+const CR: u8 = b'\r';
+const LF: u8 = b'\n';
 
 /// Parse an incoming HTTP connection.
 ///
 /// Supports `KeepAlive` requests by default.
 pub async fn accept<RW, F, Fut>(addr: &str, mut io: RW, endpoint: F) -> Result<(), Exception>
 where
-    RW: Read + Write + Clone + Send + Unpin + 'static,
+    RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
     F: Fn(Request) -> Fut,
     Fut: Future<Output = Result<Response, Exception>>,
 {
@@ -33,6 +38,7 @@ where
     // Decode a request. This may be the first of many since the connection is Keep-Alive by default.
     let r = io.clone();
     let req = decode(addr, r).await?;
+
     if let Some(mut req) = req {
         loop {
             match num_requests {
@@ -111,13 +117,13 @@ impl Encoder {
         // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
         // send all items in chunks.
         if let Some(len) = self.res.len() {
-            std::io::Write::write_fmt(&mut head, format_args!("Content-Length: {}\r\n", len))?;
+            std::io::Write::write_fmt(&mut head, format_args!("content-length: {}\r\n", len))?;
         } else {
-            std::io::Write::write_fmt(&mut head, format_args!("Transfer-Encoding: chunked\r\n"))?;
+            std::io::Write::write_fmt(&mut head, format_args!("transfer-encoding: chunked\r\n"))?;
         }
 
         let date = fmt_http_date(std::time::SystemTime::now());
-        std::io::Write::write_fmt(&mut head, format_args!("Date: {}\r\n", date))?;
+        std::io::Write::write_fmt(&mut head, format_args!("date: {}\r\n", date))?;
 
         for (header, values) in self.res.iter() {
             for value in values.iter() {
@@ -211,14 +217,15 @@ impl Read for Encoder {
                         body_bytes_read
                     );
                     // If we've read the `len` number of bytes, end
-                    self.state = if body_len == body_bytes_read {
-                        EncoderState::Done
+                    if body_len == body_bytes_read {
+                        self.state = EncoderState::Done;
+                        break;
                     } else {
-                        EncoderState::Body {
+                        self.state = EncoderState::Body {
                             body_bytes_read,
                             body_len,
                         }
-                    };
+                    }
                 }
                 EncoderState::UncomputedChunked => {
                     // We can read a maximum of the buffer's total size
@@ -259,8 +266,8 @@ impl Read for Encoder {
                         bytes_read += chunk_length_bytes_len;
 
                         // follow chunk length with CRLF
-                        buf[bytes_read] = b'\r';
-                        buf[bytes_read + 1] = b'\n';
+                        buf[bytes_read] = CR;
+                        buf[bytes_read + 1] = LF;
                         bytes_read += 2;
 
                         // copy chunk into buf
@@ -269,12 +276,13 @@ impl Read for Encoder {
                         bytes_read += chunk_length;
 
                         // follow chunk with CRLF
-                        buf[bytes_read] = b'\r';
-                        buf[bytes_read + 1] = b'\n';
+                        buf[bytes_read] = CR;
+                        buf[bytes_read + 1] = LF;
                         bytes_read += 2;
 
                         if chunk_length == 0 {
                             self.state = EncoderState::Done;
+                            break;
                         }
                     } else {
                         let mut chunk = vec![0; total_chunk_size];
@@ -284,8 +292,8 @@ impl Read for Encoder {
                         bytes_written += chunk_length_bytes_len;
 
                         // follow chunk length with CRLF
-                        chunk[bytes_written] = b'\r';
-                        chunk[bytes_written + 1] = b'\n';
+                        chunk[bytes_written] = CR;
+                        chunk[bytes_written + 1] = LF;
                         bytes_written += 2;
 
                         // copy chunk into buf
@@ -294,8 +302,8 @@ impl Read for Encoder {
                         bytes_written += chunk_length;
 
                         // follow chunk with CRLF
-                        chunk[bytes_written] = b'\r';
-                        chunk[bytes_written + 1] = b'\n';
+                        chunk[bytes_written] = CR;
+                        chunk[bytes_written + 1] = LF;
                         bytes_read += 2;
                         self.state = EncoderState::ComputedChunked {
                             chunk: io::Cursor::new(chunk),
@@ -330,7 +338,7 @@ const HTTP_1_1_VERSION: u8 = 1;
 /// Decode an HTTP request on the server.
 async fn decode<R>(addr: &str, reader: R) -> Result<Option<Request>, Exception>
 where
-    R: Read + Unpin + Send + 'static,
+    R: Read + Unpin + Send + Sync + 'static,
 {
     let mut reader = BufReader::new(reader);
     let mut buf = Vec::new();
@@ -339,7 +347,7 @@ where
 
     // Keep reading bytes from the stream until we hit the end of the stream.
     loop {
-        let bytes_read = reader.read_until(b'\n', &mut buf).await?;
+        let bytes_read = reader.read_until(LF, &mut buf).await?;
         // No more bytes are yielded from the stream.
         if bytes_read == 0 {
             return Ok(None);
@@ -375,13 +383,39 @@ where
         req.insert_header(name, value)?;
     }
 
-    // Check for content-length, that determines determines whether we can parse
-    // it with a known length, or need to use chunked encoding.
-    let len = match req.header(&CONTENT_LENGTH) {
-        Some(len) => len.last().unwrap().as_str().parse::<usize>()?,
-        None => return Ok(Some(req)),
-    };
-    req.set_body(Body::from_reader(reader, Some(len)));
+    let content_length = req.header(&CONTENT_LENGTH);
+    let transfer_encoding = req.header(&TRANSFER_ENCODING);
+
+    if content_length.is_some() && transfer_encoding.is_some() {
+        // This is always an error.
+        return Err(HttpError::UnexpectedContentLengthHeader.into());
+    }
+
+    // Check for Transfer-Encoding
+    match transfer_encoding {
+        Some(encoding) if !encoding.is_empty() => {
+            if encoding.last().unwrap().as_str() == "chunked" {
+                req.set_body(Body::from_reader(
+                    BufReader::new(ChunkedDecoder::new(reader)),
+                    None,
+                ));
+                return Ok(Some(req));
+            }
+            // Fall through to Content-Length
+        }
+        _ => {
+            // Fall through to Content-Length
+        }
+    }
+
+    // Check for Content-Length.
+    match content_length {
+        Some(len) => {
+            let len = len.last().unwrap().as_str().parse::<usize>()?;
+            req.set_body(Body::from_reader(reader.take(len as u64), Some(len)));
+        }
+        None => {}
+    }
 
     Ok(Some(req))
 }

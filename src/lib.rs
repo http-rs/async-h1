@@ -28,9 +28,9 @@
 //! // tbi
 //! ```
 
-#![forbid(unsafe_code, future_incompatible, rust_2018_idioms)]
+#![forbid(unsafe_code, rust_2018_idioms)]
 #![deny(missing_debug_implementations, nonstandard_style)]
-// #![warn(missing_docs, missing_doc_code_examples, unreachable_pub)]
+#![warn(missing_docs, missing_doc_code_examples, unreachable_pub)]
 #![cfg_attr(test, deny(warnings))]
 
 /// The maximum amount of headers parsed on the server.
@@ -39,10 +39,14 @@ const MAX_HEADERS: usize = 128;
 pub use check::check;
 
 mod check;
+mod error;
+
+pub use crate::error::HttpError;
 
 pub mod client;
 pub mod server;
 
+mod chunked;
 mod date;
 
 /// A generic fallible type.
