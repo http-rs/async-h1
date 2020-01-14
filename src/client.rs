@@ -80,8 +80,9 @@ pub async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
     }
 
     let date = fmt_http_date(std::time::SystemTime::now());
-    let val = format!("Date: {}\r\n", date);
-    buf.write_all(val.as_bytes()).await?;
+    buf.write_all(b"Date: ").await?;
+    buf.write_all(date.as_bytes()).await?;
+    buf.write_all(b"\r\n").await?;
 
     for (header, values) in req.iter() {
         for value in values.iter() {
