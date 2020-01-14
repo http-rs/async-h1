@@ -5,7 +5,7 @@ use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
 use http_types::{
-    headers::{HeaderName, HeaderValue, CONTENT_LENGTH, TRANSFER_ENCODING},
+    headers::{HeaderName, HeaderValue, CONTENT_LENGTH, TRANSFER_ENCODING, DATE},
     Body, Request, Response, StatusCode,
 };
 
@@ -96,7 +96,7 @@ pub async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
     Ok(Encoder::new(buf, req))
 }
 
-/// Decode an HTTP respons on the client.
+/// Decode an HTTP response on the client.
 pub async fn decode<R>(reader: R) -> Result<Response, Exception>
 where
     R: Read + Unpin + Send + Sync + 'static,
@@ -140,6 +140,12 @@ where
         let name = HeaderName::from_str(header.name)?;
         let value = HeaderValue::from_str(std::str::from_utf8(header.value)?)?;
         res.insert_header(name, value)?;
+    }
+
+    if res.header(&DATE).is_none() {
+        let date = format!("Date: {}\r\n", fmt_http_date(std::time::SystemTime::now()));
+        let value = HeaderValue::from_str(std::str::from_utf8(date.as_bytes())?)?;
+        res.insert_header(DATE, value)?;
     }
 
     let content_length = res.header(&CONTENT_LENGTH);
