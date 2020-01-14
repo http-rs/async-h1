@@ -143,9 +143,10 @@ where
     }
 
     if res.header(&DATE).is_none() {
-        let date = format!("Date: {}\r\n", fmt_http_date(std::time::SystemTime::now()));
-        let value = HeaderValue::from_str(std::str::from_utf8(date.as_bytes())?)?;
-        res.insert_header(DATE, value)?;
+        let date = fmt_http_date(std::time::SystemTime::now());
+        buf.write_all(b"Date: ").await?;
+        buf.write_all(date.as_bytes()).await?;
+        buf.write_all(b"\r\n").await?;
     }
 
     let content_length = res.header(&CONTENT_LENGTH);
