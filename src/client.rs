@@ -14,6 +14,7 @@ use std::str::FromStr;
 
 use crate::chunked::ChunkedDecoder;
 use crate::error::HttpError;
+use crate::date::fmt_http_date;
 use crate::{Exception, MAX_HEADERS};
 
 /// An HTTP encoder.
@@ -77,6 +78,11 @@ pub async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
         // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Transfer-Encoding
         //      https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Trailer
     }
+
+    let date = fmt_http_date(std::time::SystemTime::now());
+    let val = format!("Date: {}\r\n", date);
+    buf.write_all(val.as_bytes()).await?;
+
     for (header, values) in req.iter() {
         for value in values.iter() {
             let val = format!("{}: {}\r\n", header, value);
