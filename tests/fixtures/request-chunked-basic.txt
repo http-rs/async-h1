@@ -1,4 +1,4 @@
 GET / HTTP/1.1
-Host: example.com
-User-Agent: curl/7.54.0
+host: example.com
+user-agent: curl/7.54.0
 

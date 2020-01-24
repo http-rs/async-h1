@@ -5,7 +5,7 @@ use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
 use http_types::{
-    headers::{HeaderName, HeaderValue, CONTENT_LENGTH, TRANSFER_ENCODING, DATE},
+    headers::{HeaderName, HeaderValue, CONTENT_LENGTH, DATE, TRANSFER_ENCODING},
     Body, Request, Response, StatusCode,
 };
 
@@ -13,8 +13,8 @@ use std::pin::Pin;
 use std::str::FromStr;
 
 use crate::chunked::ChunkedDecoder;
-use crate::error::HttpError;
 use crate::date::fmt_http_date;
+use crate::error::HttpError;
 use crate::{Exception, MAX_HEADERS};
 
 /// An HTTP encoder.
@@ -80,7 +80,7 @@ pub async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
     }
 
     let date = fmt_http_date(std::time::SystemTime::now());
-    buf.write_all(b"Date: ").await?;
+    buf.write_all(b"date: ").await?;
     buf.write_all(date.as_bytes()).await?;
     buf.write_all(b"\r\n").await?;
 
@@ -145,9 +145,7 @@ where
 
     if res.header(&DATE).is_none() {
         let date = fmt_http_date(std::time::SystemTime::now());
-        buf.write_all(b"Date: ").await?;
-        buf.write_all(date.as_bytes()).await?;
-        buf.write_all(b"\r\n").await?;
+        res.insert_header(DATE, &format!("date: {}\r\n", date)[..])?;
     }
 
     let content_length = res.header(&CONTENT_LENGTH);
