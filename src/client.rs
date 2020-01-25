@@ -5,7 +5,7 @@ use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
 use http_types::{
-    headers::{HeaderName, HeaderValue, CONTENT_LENGTH, TRANSFER_ENCODING},
+    headers::{HeaderName, HeaderValue, CONTENT_LENGTH, DATE, TRANSFER_ENCODING},
     Body, Request, Response, StatusCode,
 };
 
@@ -13,6 +13,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 
 use crate::chunked::ChunkedDecoder;
+use crate::date::fmt_http_date;
 use crate::error::HttpError;
 use crate::{Exception, MAX_HEADERS};
 
@@ -77,6 +78,12 @@ pub async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
         // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Transfer-Encoding
         //      https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Trailer
     }
+
+    let date = fmt_http_date(std::time::SystemTime::now());
+    buf.write_all(b"date: ").await?;
+    buf.write_all(date.as_bytes()).await?;
+    buf.write_all(b"\r\n").await?;
+
     for (header, values) in req.iter() {
         for value in values.iter() {
             let val = format!("{}: {}\r\n", header, value);
@@ -90,7 +97,7 @@ pub async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
     Ok(Encoder::new(buf, req))
 }
 
-/// Decode an HTTP respons on the client.
+/// Decode an HTTP response on the client.
 pub async fn decode<R>(reader: R) -> Result<Response, Exception>
 where
     R: Read + Unpin + Send + Sync + 'static,
@@ -134,6 +141,11 @@ where
         let name = HeaderName::from_str(header.name)?;
         let value = HeaderValue::from_str(std::str::from_utf8(header.value)?)?;
         res.insert_header(name, value)?;
+    }
+
+    if res.header(&DATE).is_none() {
+        let date = fmt_http_date(std::time::SystemTime::now());
+        res.insert_header(DATE, &format!("date: {}\r\n", date)[..])?;
     }
 
     let content_length = res.header(&CONTENT_LENGTH);

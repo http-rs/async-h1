@@ -70,27 +70,30 @@ impl TestCase {
         assert!(!expected.is_empty(), "Missing expected fixture");
 
         // munge actual and expected so that we don't rely on dates matching exactly
-        match expected.find("{DATE}") {
-            Some(i) => {
-                expected.replace_range(i..i + 6, "");
-                match expected.get(i..i + 1) {
-                    Some(byte) => {
-                        let j = actual[i..].find(byte).expect("Byte not found");
-                        actual.replace_range(i..i + j, "");
-                    }
-                    None => expected.replace_range(i.., ""),
-                }
-            }
-            None => {}
-        }
-
+        munge_date(&mut expected, &mut actual);
         pretty_assertions::assert_eq!(actual, expected);
     }
 }
 
-fn fixture_path(relative_path: &str) -> PathBuf {
+pub(crate) fn fixture_path(relative_path: &str) -> PathBuf {
     let directory: PathBuf = env!("CARGO_MANIFEST_DIR").into();
     directory.join("tests").join(relative_path)
+}
+
+pub(crate) fn munge_date(expected: &mut String, actual: &mut String) {
+    match expected.find("{DATE}") {
+        Some(i) => {
+            expected.replace_range(i..i + 6, "");
+            match expected.get(i..i + 1) {
+                Some(byte) => {
+                    let j = actual[i..].find(byte).expect("Byte not found");
+                    actual.replace_range(i..i + j, "");
+                }
+                None => expected.replace_range(i.., ""),
+            }
+        }
+        None => {}
+    }
 }
 
 impl Read for TestCase {
