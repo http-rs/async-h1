@@ -8,14 +8,14 @@ use http_types::{
     headers::{HeaderName, HeaderValue, CONTENT_LENGTH, DATE, TRANSFER_ENCODING},
     Body, Request, Response, StatusCode,
 };
+use http_types::{Error, ErrorKind};
 
 use std::pin::Pin;
 use std::str::FromStr;
 
 use crate::chunked::ChunkedDecoder;
 use crate::date::fmt_http_date;
-use crate::error::HttpError;
-use crate::{Exception, MAX_HEADERS};
+use crate::{MAX_HEADERS};
 
 /// An HTTP encoder.
 #[derive(Debug)]
@@ -98,7 +98,7 @@ pub async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
 }
 
 /// Decode an HTTP response on the client.
-pub async fn decode<R>(reader: R) -> Result<Response, Exception>
+pub async fn decode<R>(reader: R) -> Result<Response, Error>
 where
     R: Read + Unpin + Send + Sync + 'static,
 {
@@ -125,15 +125,14 @@ where
     // Convert our header buf into an httparse instance, and validate.
     let status = httparse_res.parse(&buf)?;
     if status.is_partial() {
-        dbg!(String::from_utf8(buf).unwrap());
-        return Err("Malformed HTTP head".into());
+        return Err(Error::new(ErrorKind::InvalidData, "Malformed HTTP head", StatusCode::BadRequest));
     }
-    let code = httparse_res.code.ok_or_else(|| "No status code found")?;
+    let code = httparse_res.code.ok_or_else(|| Err(Error::new(ErrorKind::InvalidData, "No status code found", StatusCode::BadRequest)))?;
 
     // Convert httparse headers + body into a `http::Response` type.
-    let version = httparse_res.version.ok_or_else(|| "No version found")?;
+    let version = httparse_res.version.ok_or_else(|| Err(Error::new(ErrorKind::InvalidData, "No version found", StatusCode::BadRequest)))?;
     if version != 1 {
-        return Err("Unsupported HTTP version".into());
+        return Err(Error::new(ErrorKind::InvalidData, "Unsupported HTTP version", StatusCode::BadRequest));
     }
     use std::convert::TryFrom;
     let mut res = Response::new(StatusCode::try_from(code)?);
@@ -153,7 +152,7 @@ where
 
     if content_length.is_some() && transfer_encoding.is_some() {
         // This is always an error.
-        return Err(HttpError::UnexpectedContentLengthHeader.into());
+        return Err(Error::new(ErrorKind::InvalidData, "Unexpected Content-Length header", StatusCode::BadRequest));
     }
 
     // Check for Transfer-Encoding

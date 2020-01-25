@@ -11,11 +11,10 @@ use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
 use http_types::headers::{HeaderName, HeaderValue, CONTENT_LENGTH, TRANSFER_ENCODING};
-use http_types::{Body, Method, Request, Response};
+use http_types::{Body, Method, Request, Response, StatusCode, Error, ErrorKind};
 
 use crate::chunked::ChunkedDecoder;
 use crate::date::fmt_http_date;
-use crate::error::HttpError;
 use crate::{Exception, MAX_HEADERS};
 
 const CR: u8 = b'\r';
@@ -24,7 +23,7 @@ const LF: u8 = b'\n';
 /// Parse an incoming HTTP connection.
 ///
 /// Supports `KeepAlive` requests by default.
-pub async fn accept<RW, F, Fut>(addr: &str, mut io: RW, endpoint: F) -> Result<(), Exception>
+pub async fn accept<RW, F, Fut>(addr: &str, mut io: RW, endpoint: F) -> http_types::Result<()>
 where
     RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
     F: Fn(Request) -> Fut,
@@ -56,7 +55,7 @@ where
             req = match timeout(timeout_duration, decode(addr, io.clone())).await {
                 Ok(Ok(Some(r))) => r,
                 Ok(Ok(None)) | Err(TimeoutError { .. }) => break, /* EOF or timeout */
-                Ok(Err(e)) => return Err(e),
+                Ok(Err(e)) => return Err(e).into(),
             };
             // Loop back with the new request and stream and start again
         }
@@ -336,7 +335,7 @@ impl Read for Encoder {
 const HTTP_1_1_VERSION: u8 = 1;
 
 /// Decode an HTTP request on the server.
-async fn decode<R>(addr: &str, reader: R) -> Result<Option<Request>, Exception>
+async fn decode<R>(addr: &str, reader: R) -> Result<Option<Request>, Error>
 where
     R: Read + Unpin + Send + Sync + 'static,
 {
@@ -388,7 +387,7 @@ where
 
     if content_length.is_some() && transfer_encoding.is_some() {
         // This is always an error.
-        return Err(HttpError::UnexpectedContentLengthHeader.into());
+        return Err(Error::new(ErrorKind::InvalidData, "Unexpected Content-Length header", StatusCode::BadRequest));
     }
 
     // Check for Transfer-Encoding
