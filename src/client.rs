@@ -1,6 +1,6 @@
 //! Process HTTP connections on the client.
 
-use async_std::io::{self, BufReader, Read};
+use async_std::io::{self, BufReader, Read, Write};
 use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
@@ -46,6 +46,17 @@ impl Encoder {
             body_bytes_read: 0,
         }
     }
+}
+
+/// Send an HTTP request over a stream.
+pub async fn connect<RW>(stream: RW, req: Request) -> Result<Response, std::io::Error>
+where
+    RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
+{
+    let mut req = encode(req).await?;
+    io::copy(&mut req, &mut stream.clone()).await?;
+    let res = decode(stream.clone()).await.unwrap(); // todo: convert to http_types::Error
+    Ok(res)
 }
 
 /// Encode an HTTP request on the client.
