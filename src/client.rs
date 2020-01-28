@@ -1,6 +1,6 @@
 //! Process HTTP connections on the client.
 
-use async_std::io::{self, BufReader, Read};
+use async_std::io::{self, BufReader, Read, Write};
 use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
@@ -48,8 +48,19 @@ impl Encoder {
     }
 }
 
+/// Send an HTTP request over a stream.
+pub async fn connect<RW>(stream: RW,  req: Request) -> Result<Response, std::io::Error> 
+where 
+    RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
+{
+    let mut req = encode(req).await?;
+    io::copy(&mut req, &mut stream.clone()).await?;
+    let res = decode(stream.clone()).await.unwrap(); // todo: convert to http_types::Error
+    Ok(res)
+}
+
 /// Encode an HTTP request on the client.
-pub async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
+async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
     let mut buf: Vec<u8> = vec![];
 
     let mut url = req.url().path().to_owned();
@@ -98,7 +109,7 @@ pub async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
 }
 
 /// Decode an HTTP response on the client.
-pub async fn decode<R>(reader: R) -> Result<Response, Exception>
+async fn decode<R>(reader: R) -> Result<Response, Exception>
 where
     R: Read + Unpin + Send + Sync + 'static,
 {
