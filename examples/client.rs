@@ -20,7 +20,11 @@ fn main() -> Result<(), async_h1::Exception> {
             println!("making request {}/2", i + 1);
             let url = Url::parse(&format!("http://{}/foo", peer_addr)).unwrap();
             let req = Request::new(Method::Get, dbg!(url));
-            let res = client::connect(stream.clone(), req).await?;
+            let mut req = client::encode(req).await?;
+            io::copy(&mut req, &mut stream.clone()).await?;
+
+            // read the response
+            let res = client::decode(stream.clone()).await?;
             println!("{:?}", res);
         }
         Ok(())
