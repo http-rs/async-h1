@@ -362,8 +362,7 @@ where
     // Convert our header buf into an httparse instance, and validate.
     let status = httparse_req.parse(&buf)?;
 
-    let err =
-        |msg| Error::new_from_str(ErrorKind::InvalidData, msg, StatusCode::InternalServerError);
+    let err = |msg| Error::new_from_str(ErrorKind::InvalidData, msg, StatusCode::BadRequest);
 
     if status.is_partial() {
         return Err(err("Malformed HTTP head"));
