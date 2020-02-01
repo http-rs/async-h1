@@ -66,7 +66,7 @@ impl HttpDate {
 }
 
 fn err(msg: &'static str) -> Error {
-    Error::new_from_str(ErrorKind::InvalidData, msg, StatusCode::BadRequest)
+    Error::from_str(ErrorKind::InvalidData, msg, StatusCode::BadRequest)
 }
 
 fn parse_imf_fixdate(s: &[u8]) -> Result<HttpDate, Error> {
