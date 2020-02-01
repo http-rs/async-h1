@@ -2,13 +2,12 @@ use std::fmt;
 use std::future::Future;
 use std::ops::Range;
 use std::pin::Pin;
-use std::str::FromStr;
 use std::task::{Context, Poll};
 
 use async_std::io::{self, Read};
-use async_std::sync::{channel, Arc, Receiver, Sender};
+use async_std::sync::Arc;
 use byte_pool::{Block, BytePool};
-use http_types::headers::{HeaderName, HeaderValue};
+use http_types::trailers::{Trailers, TrailersSender};
 
 const INITIAL_CAPACITY: usize = 1024 * 4;
 const MAX_CAPACITY: usize = 512 * 1024 * 1024; // 512 MiB
@@ -33,28 +32,19 @@ pub(crate) struct ChunkedDecoder<R: Read> {
     /// Current state.
     state: State,
     /// Trailer channel sender.
-    trailer_sender: Sender<Vec<(HeaderName, HeaderValue)>>,
-    /// Trailer channel receiver.
-    trailer_receiver: Receiver<Vec<(HeaderName, HeaderValue)>>,
+    trailer_sender: Option<TrailersSender>,
 }
 
 impl<R: Read> ChunkedDecoder<R> {
-    pub(crate) fn new(inner: R) -> Self {
-        let (sender, receiver) = channel(1);
-
+    pub(crate) fn new(inner: R, trailer_sender: TrailersSender) -> Self {
         ChunkedDecoder {
             inner,
             buffer: POOL.alloc(INITIAL_CAPACITY),
             current: Range { start: 0, end: 0 },
             initial_decode: false, // buffer is empty initially, nothing to decode}
             state: State::Init,
-            trailer_sender: sender,
-            trailer_receiver: receiver,
+            trailer_sender: Some(trailer_sender),
         }
-    }
-
-    pub(crate) fn trailer(&self) -> Receiver<Vec<(HeaderName, HeaderValue)>> {
-        self.trailer_receiver.clone()
     }
 }
 
@@ -94,7 +84,7 @@ impl<R: Read + Unpin> ChunkedDecoder<R> {
 
             return Ok(DecodeResult::Some {
                 read,
-                new_state,
+                new_state: Some(new_state),
                 new_pos,
                 buffer,
                 pending: false,
@@ -115,7 +105,7 @@ impl<R: Read + Unpin> ChunkedDecoder<R> {
 
                 Ok(DecodeResult::Some {
                     read,
-                    new_state,
+                    new_state: Some(new_state),
                     new_pos,
                     buffer,
                     pending: false,
@@ -124,7 +114,7 @@ impl<R: Read + Unpin> ChunkedDecoder<R> {
             Poll::Pending => {
                 return Ok(DecodeResult::Some {
                     read: 0,
-                    new_state: State::Chunk(new_current, len),
+                    new_state: Some(State::Chunk(new_current, len)),
                     new_pos,
                     buffer,
                     pending: true,
@@ -155,14 +145,27 @@ impl<R: Read + Unpin> ChunkedDecoder<R> {
                 decode_trailer(buffer, pos)
             }
             State::TrailerDone(ref mut headers) => {
-                let headers = std::mem::replace(headers, Vec::new());
-                let mut fut = Box::pin(self.trailer_sender.send(headers));
-                match Pin::new(&mut fut).poll(cx) {
+                let headers = std::mem::replace(headers, Trailers::new());
+                let sender = self.trailer_sender.take();
+                let sender =
+                    sender.expect("invalid chunked state, tried sending multiple trailers");
+
+                let fut = Box::pin(sender.send(Ok(headers)));
+                Ok(DecodeResult::Some {
+                    read: 0,
+                    new_state: Some(State::TrailerSending(fut)),
+                    new_pos: pos.clone(),
+                    buffer,
+                    pending: false,
+                })
+            }
+            State::TrailerSending(ref mut fut) => {
+                match Pin::new(fut).poll(cx) {
                     Poll::Ready(_) => {}
                     Poll::Pending => {
                         return Ok(DecodeResult::Some {
                             read: 0,
-                            new_state: self.state.clone(),
+                            new_state: None,
                             new_pos: pos.clone(),
                             buffer,
                             pending: true,
@@ -172,7 +175,7 @@ impl<R: Read + Unpin> ChunkedDecoder<R> {
 
                 Ok(DecodeResult::Some {
                     read: 0,
-                    new_state: State::Done,
+                    new_state: Some(State::Done),
                     new_pos: pos.clone(),
                     buffer,
                     pending: false,
@@ -180,7 +183,7 @@ impl<R: Read + Unpin> ChunkedDecoder<R> {
             }
             State::Done => Ok(DecodeResult::Some {
                 read: 0,
-                new_state: State::Done,
+                new_state: Some(State::Done),
                 new_pos: pos.clone(),
                 buffer,
                 pending: false,
@@ -217,7 +220,9 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
                     pending,
                 } => {
                     this.current = new_pos.clone();
-                    this.state = new_state;
+                    if let Some(state) = new_state {
+                        this.state = state;
+                    }
 
                     if pending {
                         // initial_decode is still true
@@ -225,7 +230,13 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
                         return Poll::Pending;
                     }
 
-                    if State::Done == this.state || read > 0 {
+                    if let State::Done = this.state {
+                        // initial_decode is still true
+                        this.buffer = buffer;
+                        return Poll::Ready(Ok(read));
+                    }
+
+                    if read > 0 {
                         // initial_decode is still true
                         this.buffer = buffer;
                         return Poll::Ready(Ok(read));
@@ -281,11 +292,18 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
                     // current buffer might now contain more data inside, so we need to attempt
                     // to decode it next time
                     this.initial_decode = true;
-                    this.state = new_state;
+                    if let Some(state) = new_state {
+                        this.state = state;
+                    }
                     this.current = new_pos.clone();
                     n = new_pos;
 
-                    if State::Done == this.state || read > 0 {
+                    if let State::Done = this.state {
+                        this.buffer = new_buffer;
+                        return Poll::Ready(Ok(read));
+                    }
+
+                    if read > 0 {
                         this.buffer = new_buffer;
                         return Poll::Ready(Ok(read));
                     }
@@ -329,7 +347,7 @@ enum DecodeResult {
         /// The new range of valid data in `buffer`.
         new_pos: Range<usize>,
         /// The new state.
-        new_state: State,
+        new_state: Option<State>,
         /// Should poll return `Pending`.
         pending: bool,
     },
@@ -338,7 +356,6 @@ enum DecodeResult {
 }
 
 /// Decoder state.
-#[derive(Debug, PartialEq, Clone)]
 enum State {
     /// Initial state.
     Init,
@@ -349,9 +366,24 @@ enum State {
     /// Decoding trailers.
     Trailer,
     /// Trailers were decoded, are now set to the decoded trailers.
-    TrailerDone(Vec<(HeaderName, HeaderValue)>),
+    TrailerDone(Trailers),
+    TrailerSending(Pin<Box<dyn Future<Output = ()> + 'static + Send + Sync>>),
     /// All is said and done.
     Done,
+}
+impl fmt::Debug for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use State::*;
+        match self {
+            Init => write!(f, "State::Init"),
+            Chunk(a, b) => write!(f, "State::Chunk({}, {})", a, b),
+            ChunkEnd => write!(f, "State::ChunkEnd"),
+            Trailer => write!(f, "State::Trailer"),
+            TrailerDone(trailers) => write!(f, "State::TrailerDone({:?})", &trailers),
+            TrailerSending(_) => write!(f, "State::TrailerSending"),
+            Done => write!(f, "State::Done"),
+        }
+    }
 }
 
 impl fmt::Debug for DecodeResult {
@@ -395,7 +427,7 @@ fn decode_init(buffer: Block<'static>, pos: &Range<usize>) -> io::Result<DecodeR
                 read: 0,
                 buffer,
                 new_pos,
-                new_state,
+                new_state: Some(new_state),
                 pending: false,
             })
         }
@@ -418,7 +450,7 @@ fn decode_chunk_end(buffer: Block<'static>, pos: &Range<usize>) -> io::Result<De
                 start: pos.start + 2,
                 end: pos.end,
             },
-            new_state: State::Init,
+            new_state: Some(State::Init),
             pending: false,
         });
     }
@@ -434,21 +466,16 @@ fn decode_trailer(buffer: Block<'static>, pos: &Range<usize>) -> io::Result<Deco
 
     match httparse::parse_headers(&buffer[pos.start..pos.end], &mut headers) {
         Ok(Status::Complete((used, headers))) => {
-            let headers = headers
-                .iter()
-                .map(|header| {
-                    // TODO: error propagation
-                    let name = HeaderName::from_str(header.name).unwrap();
-                    let value =
-                        HeaderValue::from_str(&std::string::String::from_utf8_lossy(header.value))
-                            .unwrap();
-                    (name, value)
-                })
-                .collect();
+            let mut trailers = Trailers::new();
+            for header in headers {
+                let value = std::string::String::from_utf8_lossy(header.value).to_string();
+                trailers.insert(header.name, value).unwrap();
+            }
+
             Ok(DecodeResult::Some {
                 read: 0,
                 buffer,
-                new_state: State::TrailerDone(headers),
+                new_state: Some(State::TrailerDone(trailers)),
                 new_pos: Range {
                     start: pos.start + used,
                     end: pos.end,
@@ -481,7 +508,10 @@ mod tests {
                   \r\n"
                     .as_bytes(),
             );
-            let mut decoder = ChunkedDecoder::new(input);
+
+            let (s, _r) = async_std::sync::channel(1);
+            let sender = TrailersSender::new(s);
+            let mut decoder = ChunkedDecoder::new(input, sender);
 
             let mut output = String::new();
             decoder.read_to_string(&mut output).await.unwrap();
@@ -509,19 +539,21 @@ mod tests {
                  \r\n"
                     .as_bytes(),
             );
-            let mut decoder = ChunkedDecoder::new(input);
+            let (s, r) = async_std::sync::channel(1);
+            let sender = TrailersSender::new(s);
+            let mut decoder = ChunkedDecoder::new(input, sender);
 
             let mut output = String::new();
             decoder.read_to_string(&mut output).await.unwrap();
             assert_eq!(output, "MozillaDeveloperNetwork");
 
-            let trailer = decoder.trailer().recv().await;
+            let trailer = r.recv().await.unwrap().unwrap();
             assert_eq!(
-                trailer,
-                Some(vec![(
-                    "Expires".parse().unwrap(),
-                    "Wed, 21 Oct 2015 07:28:00 GMT".parse().unwrap(),
-                )])
+                trailer.iter().collect::<Vec<_>>(),
+                vec![(
+                    &"Expires".parse().unwrap(),
+                    &vec!["Wed, 21 Oct 2015 07:28:00 GMT".parse().unwrap()],
+                )]
             );
         });
     }
