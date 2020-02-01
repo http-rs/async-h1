@@ -5,9 +5,9 @@ use async_h1::client;
 use async_std::io::{self, Read, Write};
 use async_std::net::{self, TcpStream};
 use async_std::task::{self, Context, Poll};
-use http_types::{Method, Request, Url};
+use http_types::{Error, Method, Request, Url};
 
-fn main() -> Result<(), async_h1::Exception> {
+fn main() -> Result<(), Error> {
     task::block_on(async {
         let stream = net::TcpStream::connect("127.0.0.1:8080").await?;
         let peer_addr = stream.peer_addr()?;

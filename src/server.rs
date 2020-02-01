@@ -11,11 +11,11 @@ use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
 use http_types::headers::{HeaderName, HeaderValue, CONTENT_LENGTH, TRANSFER_ENCODING};
-use http_types::{Body, Method, Request, Response, StatusCode, Error, ErrorKind};
+use http_types::{Body, Error, ErrorKind, Method, Request, Response, StatusCode};
 
 use crate::chunked::ChunkedDecoder;
 use crate::date::fmt_http_date;
-use crate::{Exception, MAX_HEADERS};
+use crate::MAX_HEADERS;
 
 const CR: u8 = b'\r';
 const LF: u8 = b'\n';
@@ -27,7 +27,7 @@ pub async fn accept<RW, F, Fut>(addr: &str, mut io: RW, endpoint: F) -> http_typ
 where
     RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
     F: Fn(Request) -> Fut,
-    Fut: Future<Output = Result<Response, Exception>>,
+    Fut: Future<Output = Result<Response, Error>>,
 {
     // TODO: make configurable
     let timeout_duration = Duration::from_secs(10);
@@ -361,18 +361,24 @@ where
 
     // Convert our header buf into an httparse instance, and validate.
     let status = httparse_req.parse(&buf)?;
+
+    let err =
+        |msg| Error::new_from_str(ErrorKind::InvalidData, msg, StatusCode::InternalServerError);
+
     if status.is_partial() {
-        return Err("Malformed HTTP head".into());
+        return Err(err("Malformed HTTP head"));
     }
 
     // Convert httparse headers + body into a `http::Request` type.
-    let method = httparse_req.method.ok_or_else(|| "No method found")?;
-    let uri = httparse_req.path.ok_or_else(|| "No uri found")?;
+    let method = httparse_req.method.ok_or_else(|| err("No method found"))?;
+    let uri = httparse_req.path.ok_or_else(|| err("No uri found"))?;
     let uri = url::Url::parse(&format!("{}{}", addr, uri))?;
 
-    let version = httparse_req.version.ok_or_else(|| "No version found")?;
+    let version = httparse_req
+        .version
+        .ok_or_else(|| err("No version found"))?;
     if version != HTTP_1_1_VERSION {
-        return Err("Unsupported HTTP version".into());
+        return Err(err("Unsupported HTTP version"));
     }
 
     let mut req = Request::new(Method::from_str(method)?, uri);
@@ -387,7 +393,11 @@ where
 
     if content_length.is_some() && transfer_encoding.is_some() {
         // This is always an error.
-        return Err(Error::new(ErrorKind::InvalidData, "Unexpected Content-Length header", StatusCode::BadRequest));
+        return Err(Error::new_from_str(
+            ErrorKind::InvalidData,
+            "Unexpected Content-Length header",
+            StatusCode::BadRequest,
+        ));
     }
 
     // Check for Transfer-Encoding
