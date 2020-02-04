@@ -49,7 +49,7 @@ impl Encoder {
 }
 
 /// Encode an HTTP request on the client.
-pub async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
+pub async fn encode(req: Request) -> Result<Encoder, Error> {
     let mut buf: Vec<u8> = vec![];
 
     let mut url = req.url().path().to_owned();
@@ -63,6 +63,20 @@ pub async fn encode(req: Request) -> Result<Encoder, std::io::Error> {
     }
 
     let val = format!("{} {} HTTP/1.1\r\n", req.method(), url);
+    log::trace!("> {}", &val);
+    buf.write_all(val.as_bytes()).await?;
+
+    // Insert Host header
+    // Insert host
+    let host = req.url().host_str().ok_or_else(|| {
+        Error::from_str(
+            ErrorKind::InvalidInput,
+            "missing hostname",
+            StatusCode::BadRequest,
+        )
+    })?;
+
+    let val = format!("host: {}\r\n", host);
     log::trace!("> {}", &val);
     buf.write_all(val.as_bytes()).await?;
 
