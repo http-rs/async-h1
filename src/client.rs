@@ -49,13 +49,18 @@ impl Encoder {
 }
 
 /// Send an HTTP request over a stream.
-pub async fn connect<RW>(stream: RW, req: Request) -> Result<Response, std::io::Error>
+pub async fn connect<RW>(mut stream: RW, req: Request) -> Result<Response, Error>
 where
-    RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
+    RW: Read + Write + Send + Sync + Unpin + 'static,
 {
     let mut req = encode(req).await?;
-    io::copy(&mut req, &mut stream.clone()).await?;
-    let res = decode(stream.clone()).await.unwrap(); // todo: convert to http_types::Error
+    log::trace!("> {:?}", &req);
+
+    io::copy(&mut req, &mut stream).await?;
+
+    let res = decode(stream).await?;
+    log::trace!("< {:?}", &res);
+
     Ok(res)
 }
 
