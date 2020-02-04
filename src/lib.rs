@@ -39,15 +39,9 @@ const MAX_HEADERS: usize = 128;
 pub use check::check;
 
 mod check;
-mod error;
-
-pub use crate::error::HttpError;
 
 pub mod client;
 pub mod server;
 
 mod chunked;
 mod date;
-
-/// A generic fallible type.
-pub type Exception = Box<dyn std::error::Error + Send + Sync + 'static>;

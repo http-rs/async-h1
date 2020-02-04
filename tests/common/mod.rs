@@ -63,7 +63,7 @@ impl TestCase {
         expected
     }
 
-    pub async fn assert(self) {
+    pub(crate) async fn assert(self) {
         let mut actual = self.read_result().await;
         let mut expected = self.read_expected().await;
         assert!(!actual.is_empty(), "Received empty reply");

@@ -8,9 +8,9 @@ use async_std::net::{self, TcpStream};
 use async_std::prelude::*;
 use async_std::task::{self, Context, Poll};
 use http_types::headers::{HeaderName, HeaderValue};
-use http_types::{Response, StatusCode};
+use http_types::{Error, Response, StatusCode};
 
-async fn accept(addr: String, stream: TcpStream) -> Result<(), async_h1::Exception> {
+async fn accept(addr: String, stream: TcpStream) -> Result<(), Error> {
     // println!("starting new connection from {}", stream.peer_addr()?);
 
     // TODO: Delete this line when we implement `Clone` for `TcpStream`.
@@ -35,7 +35,7 @@ async fn accept(addr: String, stream: TcpStream) -> Result<(), async_h1::Excepti
     .await
 }
 
-fn main() -> Result<(), async_h1::Exception> {
+fn main() -> Result<(), Error> {
     task::block_on(async {
         let listener = net::TcpListener::bind(("127.0.0.1", 8080)).await?;
         let addr = format!("http://{}", listener.local_addr()?);
