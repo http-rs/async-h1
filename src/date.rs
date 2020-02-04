@@ -1,7 +1,8 @@
-use crate::Exception;
 use std::fmt::{self, Display, Formatter};
 use std::str::{from_utf8, FromStr};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use http_types::{Error, ErrorKind, StatusCode};
 
 const IMF_FIXDATE_LENGTH: usize = 29;
 const RFC850_MAX_LENGTH: usize = 23;
@@ -37,7 +38,7 @@ pub struct HttpDate {
 /// Supports the preferred IMF-fixdate and the legacy RFC 805 and
 /// ascdate formats. Two digit years are mapped to dates between
 /// 1970 and 2069.
-pub(crate) fn parse_http_date(s: &str) -> Result<SystemTime, Exception> {
+pub(crate) fn parse_http_date(s: &str) -> Result<SystemTime, Error> {
     s.parse::<HttpDate>().map(|d| d.into())
 }
 
@@ -64,7 +65,11 @@ impl HttpDate {
     }
 }
 
-fn parse_imf_fixdate(s: &[u8]) -> Result<HttpDate, Exception> {
+fn err(msg: &'static str) -> Error {
+    Error::from_str(ErrorKind::InvalidData, msg, StatusCode::BadRequest)
+}
+
+fn parse_imf_fixdate(s: &[u8]) -> Result<HttpDate, Error> {
     // Example: `Sun, 06 Nov 1994 08:49:37 GMT`
     if s.len() != IMF_FIXDATE_LENGTH
         || &s[25..] != b" GMT"
@@ -72,7 +77,7 @@ fn parse_imf_fixdate(s: &[u8]) -> Result<HttpDate, Exception> {
         || s[19] != b':'
         || s[22] != b':'
     {
-        return Err("Date time not in imf fixdate format".into());
+        return Err(err("Date time not in imf fixdate format"));
     }
     Ok(HttpDate {
         second: from_utf8(&s[23..25])?.parse()?,
@@ -92,7 +97,7 @@ fn parse_imf_fixdate(s: &[u8]) -> Result<HttpDate, Exception> {
             b" Oct " => 10,
             b" Nov " => 11,
             b" Dec " => 12,
-            _ => return Err("Invalid Month".into()),
+            _ => return Err(err("Invalid Month")),
         },
         year: from_utf8(&s[12..16])?.parse()?,
         week_day: match &s[..5] {
@@ -103,15 +108,15 @@ fn parse_imf_fixdate(s: &[u8]) -> Result<HttpDate, Exception> {
             b"Fri, " => 5,
             b"Sat, " => 6,
             b"Sun, " => 7,
-            _ => return Err("Invalid Day".into()),
+            _ => return Err(err("Invalid Day")),
         },
     })
 }
 
-fn parse_rfc850_date(s: &[u8]) -> Result<HttpDate, Exception> {
+fn parse_rfc850_date(s: &[u8]) -> Result<HttpDate, Error> {
     // Example: `Sunday, 06-Nov-94 08:49:37 GMT`
     if s.len() < RFC850_MAX_LENGTH {
-        return Err("Date time not in rfc850 format".into());
+        return Err(err("Date time not in rfc850 format"));
     }
 
     fn week_day<'a>(s: &'a [u8], week_day: u8, name: &'static [u8]) -> Option<(u8, &'a [u8])> {
@@ -127,9 +132,9 @@ fn parse_rfc850_date(s: &[u8]) -> Result<HttpDate, Exception> {
         .or_else(|| week_day(s, 5, b"Friday, "))
         .or_else(|| week_day(s, 6, b"Saturday, "))
         .or_else(|| week_day(s, 7, b"Sunday, "))
-        .ok_or::<&'static str>("Invalid day")?;
+        .ok_or_else(|| err("Invalid day"))?;
     if s.len() != 22 || s[12] != b':' || s[15] != b':' || &s[18..22] != b" GMT" {
-        return Err("Date time not in rfc850 format".into());
+        return Err(err("Date time not in rfc850 format"));
     }
     let mut year = from_utf8(&s[7..9])?.parse::<u16>()?;
     if year < 70 {
@@ -155,18 +160,18 @@ fn parse_rfc850_date(s: &[u8]) -> Result<HttpDate, Exception> {
             b"-Oct-" => 10,
             b"-Nov-" => 11,
             b"-Dec-" => 12,
-            _ => return Err("Invalid month".into()),
+            _ => return Err(err("Invalid month")),
         },
         year: year,
         week_day: week_day,
     })
 }
 
-fn parse_asctime(s: &[u8]) -> Result<HttpDate, Exception> {
+fn parse_asctime(s: &[u8]) -> Result<HttpDate, Error> {
     // Example: `Sun Nov  6 08:49:37 1994`
     if s.len() != ASCTIME_LENGTH || s[10] != b' ' || s[13] != b':' || s[16] != b':' || s[19] != b' '
     {
-        return Err("Date time not in asctime format".into());
+        return Err(err("Date time not in asctime format"));
     }
     Ok(HttpDate {
         second: from_utf8(&s[17..19])?.parse()?,
@@ -189,7 +194,7 @@ fn parse_asctime(s: &[u8]) -> Result<HttpDate, Exception> {
             b"Oct " => 10,
             b"Nov " => 11,
             b"Dec " => 12,
-            _ => return Err("Invalid month".into()),
+            _ => return Err(err("Invalid month")),
         },
         year: from_utf8(&s[20..24])?.parse()?,
         week_day: match &s[0..4] {
@@ -200,7 +205,7 @@ fn parse_asctime(s: &[u8]) -> Result<HttpDate, Exception> {
             b"Fri " => 5,
             b"Sat " => 6,
             b"Sun " => 7,
-            _ => return Err("Invalid day".into()),
+            _ => return Err(err("Invalid day")),
         },
     })
 }
@@ -323,18 +328,18 @@ impl From<HttpDate> for SystemTime {
 }
 
 impl FromStr for HttpDate {
-    type Err = Exception;
+    type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if !s.is_ascii() {
-            return Err("Not ascii".into());
+            return Err(err("Not ascii"));
         }
         let x = s.trim().as_bytes();
         let date = parse_imf_fixdate(x)
             .or_else(|_| parse_rfc850_date(x))
             .or_else(|_| parse_asctime(x))?;
         if !date.is_valid() {
-            return Err("Invalid date time".into());
+            return Err(err("Invalid date time"));
         }
         Ok(date)
     }
