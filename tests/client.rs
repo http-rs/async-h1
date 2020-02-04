@@ -1,32 +1,27 @@
-use crate::common::{fixture_path, munge_date};
+use crate::common::fixture_path;
 use async_h1::client;
 use async_std::fs::File;
 use async_std::io::SeekFrom;
 use async_std::prelude::*;
-use http_types::{headers, Method, Request};
+use http_types::{headers, Method, Request, StatusCode};
 use url::Url;
 
 mod common;
 
+use common::TestCase;
+
 #[async_std::test]
 async fn test_encode_request_add_date() {
-    let mut request_fixture = File::open(fixture_path("fixtures/client-request1.txt"))
-        .await
-        .unwrap();
-    let mut expected = String::new();
-    request_fixture.read_to_string(&mut expected).await.unwrap();
+    let case = TestCase::new_client("fixtures/request1.txt", "fixtures/response1.txt").await;
 
-    let url = Url::parse("http://example.com").unwrap();
-    let req = Request::new(Method::Get, url);
+    let url = Url::parse("http://localhost:8080").unwrap();
+    let mut req = Request::new(Method::Post, url);
+    req.set_body("hello");
 
-    let mut encoded_req = client::encode(req).await.unwrap();
+    let res = client::connect(case.clone(), req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::Ok);
 
-    let mut actual = String::new();
-    encoded_req.read_to_string(&mut actual).await.unwrap();
-
-    munge_date(&mut expected, &mut actual);
-
-    pretty_assertions::assert_eq!(actual, expected);
+    case.assert().await;
 }
 
 #[async_std::test]

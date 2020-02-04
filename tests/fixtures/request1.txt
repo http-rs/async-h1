@@ -1,7 +1,7 @@
 POST / HTTP/1.1
 host: localhost:8080
-user-agent: curl/7.54.0
-accept: */*
-content-length: 2
-content-type: application/x-www-form-urlencoded
+content-length: 5
+date: {DATE}
+content-type: text/plain; charset=utf-8
 
+hello

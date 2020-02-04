@@ -91,8 +91,12 @@ pub async fn encode(req: Request) -> Result<Encoder, Error> {
             StatusCode::BadRequest,
         )
     })?;
+    let val = if let Some(port) = req.url().port() {
+        format!("host: {}:{}\r\n", host, port)
+    } else {
+        format!("host: {}\r\n", host)
+    };
 
-    let val = format!("host: {}\r\n", host);
     log::trace!("> {}", &val);
     buf.write_all(val.as_bytes()).await?;
 

@@ -6,22 +6,41 @@ use async_std::task::{Context, Poll};
 use std::pin::Pin;
 use std::sync::Mutex;
 
+#[derive(Debug, Copy, Clone)]
+#[allow(dead_code)]
+enum Direction {
+    Client,
+    Server,
+}
+
 #[derive(Clone)]
 pub struct TestCase {
-    request_fixture: Arc<File>,
-    response_fixture: Arc<Mutex<File>>,
+    direction: Direction,
+    source_fixture: Arc<File>,
+    expected_fixture: Arc<Mutex<File>>,
     result: Arc<Mutex<File>>,
 }
 
 impl TestCase {
-    pub async fn new(request_file_path: &str, response_file_path: &str) -> TestCase {
+    pub async fn new_server(request_file_path: &str, response_file_path: &str) -> TestCase {
+        Self::new(Direction::Server, request_file_path, response_file_path).await
+    }
+
+    pub async fn new_client(request_file_path: &str, response_file_path: &str) -> TestCase {
+        Self::new(Direction::Client, request_file_path, response_file_path).await
+    }
+
+    async fn new(
+        direction: Direction,
+        request_file_path: &str,
+        response_file_path: &str,
+    ) -> TestCase {
         let request_fixture = File::open(fixture_path(&request_file_path))
             .await
             .expect(&format!(
                 "Could not open request fixture file: {:?}",
                 &fixture_path(request_file_path)
             ));
-        let request_fixture = Arc::new(request_fixture);
 
         let response_fixture =
             File::open(fixture_path(&response_file_path))
@@ -30,14 +49,19 @@ impl TestCase {
                     "Could not open response fixture file: {:?}",
                     &fixture_path(response_file_path)
                 ));
-        let response_fixture = Arc::new(Mutex::new(response_fixture));
 
         let temp = tempfile::tempfile().expect("Failed to create tempfile");
         let result = Arc::new(Mutex::new(temp.into()));
 
+        let (source_fixture, expected_fixture) = match direction {
+            Direction::Client => (response_fixture, request_fixture),
+            Direction::Server => (request_fixture, response_fixture),
+        };
+
         TestCase {
-            request_fixture,
-            response_fixture,
+            direction,
+            source_fixture: Arc::new(source_fixture),
+            expected_fixture: Arc::new(Mutex::new(expected_fixture)),
             result,
         }
     }
@@ -54,7 +78,7 @@ impl TestCase {
     pub async fn read_expected(&self) -> String {
         use async_std::prelude::*;
         let mut expected = std::string::String::new();
-        self.response_fixture
+        self.expected_fixture
             .lock()
             .unwrap()
             .read_to_string(&mut expected)
@@ -83,13 +107,13 @@ pub(crate) fn fixture_path(relative_path: &str) -> PathBuf {
 pub(crate) fn munge_date(expected: &mut String, actual: &mut String) {
     match expected.find("{DATE}") {
         Some(i) => {
-            expected.replace_range(i..i + 6, "");
-            match expected.get(i..i + 1) {
-                Some(byte) => {
-                    let j = actual[i..].find(byte).expect("Byte not found");
-                    actual.replace_range(i..i + j, "");
+            println!("{}", expected);
+            match actual.find("date: ") {
+                Some(j) => {
+                    let eol = actual[j + 6..].find("\r\n").expect("missing eol");
+                    expected.replace_range(i..i + 6, &actual[j + 6..j + 6 + eol]);
                 }
-                None => expected.replace_range(i.., ""),
+                None => expected.replace_range(i..i + 6, ""),
             }
         }
         None => {}
@@ -102,7 +126,7 @@ impl Read for TestCase {
         cx: &mut Context,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut &*self.request_fixture).poll_read(cx, buf)
+        Pin::new(&mut &*self.source_fixture).poll_read(cx, buf)
     }
 }
 
