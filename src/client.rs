@@ -1,6 +1,6 @@
 //! Process HTTP connections on the client.
 
-use async_std::io::{self, BufReader, Read};
+use async_std::io::{self, BufReader, Read, Write};
 use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
@@ -48,6 +48,22 @@ impl Encoder {
     }
 }
 
+/// Send an HTTP request over a stream.
+pub async fn connect<RW>(mut stream: RW, req: Request) -> Result<Response, Error>
+where
+    RW: Read + Write + Send + Sync + Unpin + 'static,
+{
+    let mut req = encode(req).await?;
+    log::trace!("> {:?}", &req);
+
+    io::copy(&mut req, &mut stream).await?;
+
+    let res = decode(stream).await?;
+    log::trace!("< {:?}", &res);
+
+    Ok(res)
+}
+
 /// Encode an HTTP request on the client.
 pub async fn encode(req: Request) -> Result<Encoder, Error> {
     let mut buf: Vec<u8> = vec![];
@@ -75,8 +91,12 @@ pub async fn encode(req: Request) -> Result<Encoder, Error> {
             StatusCode::BadRequest,
         )
     })?;
+    let val = if let Some(port) = req.url().port() {
+        format!("host: {}:{}\r\n", host, port)
+    } else {
+        format!("host: {}\r\n", host)
+    };
 
-    let val = format!("host: {}\r\n", host);
     log::trace!("> {}", &val);
     buf.write_all(val.as_bytes()).await?;
 

@@ -8,7 +8,7 @@ mod common;
 
 #[async_std::test]
 async fn test_basic_request() {
-    let case = TestCase::new("fixtures/request1.txt", "fixtures/response1.txt").await;
+    let case = TestCase::new_server("fixtures/request1.txt", "fixtures/response1.txt").await;
     let addr = "http://example.com";
 
     server::accept(addr, case.clone(), |_req| async {
@@ -24,7 +24,7 @@ async fn test_basic_request() {
 
 #[async_std::test]
 async fn test_chunked_basic() {
-    let case = TestCase::new(
+    let case = TestCase::new_server(
         "fixtures/request-chunked-basic.txt",
         "fixtures/response-chunked-basic.txt",
     )
@@ -50,7 +50,7 @@ async fn test_chunked_basic() {
 
 #[async_std::test]
 async fn test_chunked_echo() {
-    let case = TestCase::new(
+    let case = TestCase::new_server(
         "fixtures/request-chunked-echo.txt",
         "fixtures/response-chunked-echo.txt",
     )
