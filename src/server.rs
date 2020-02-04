@@ -403,8 +403,9 @@ where
     match transfer_encoding {
         Some(encoding) if !encoding.is_empty() => {
             if encoding.last().unwrap().as_str() == "chunked" {
+                let trailer_sender = req.send_trailers();
                 req.set_body(Body::from_reader(
-                    BufReader::new(ChunkedDecoder::new(reader)),
+                    BufReader::new(ChunkedDecoder::new(reader, trailer_sender)),
                     None,
                 ));
                 return Ok(Some(req));

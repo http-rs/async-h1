@@ -183,8 +183,9 @@ where
     match transfer_encoding {
         Some(encoding) if !encoding.is_empty() => {
             if encoding.last().unwrap().as_str() == "chunked" {
+                let trailers_sender = res.send_trailers();
                 res.set_body(Body::from_reader(
-                    BufReader::new(ChunkedDecoder::new(reader)),
+                    BufReader::new(ChunkedDecoder::new(reader, trailers_sender)),
                     None,
                 ));
                 return Ok(res);
