@@ -36,9 +36,12 @@
 /// The maximum amount of headers parsed on the server.
 const MAX_HEADERS: usize = 128;
 
-
-pub mod client;
-pub mod server;
-
+mod server;
 mod chunked;
 mod date;
+
+#[doc(hidden)]
+pub mod client;
+
+pub use client::connect;
+pub use server::accept;
