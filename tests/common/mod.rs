@@ -22,10 +22,12 @@ pub struct TestCase {
 }
 
 impl TestCase {
+    #[allow(dead_code)]
     pub async fn new_server(request_file_path: &str, response_file_path: &str) -> TestCase {
         Self::new(Direction::Server, request_file_path, response_file_path).await
     }
 
+    #[allow(dead_code)]
     pub async fn new_client(request_file_path: &str, response_file_path: &str) -> TestCase {
         Self::new(Direction::Client, request_file_path, response_file_path).await
     }

@@ -38,6 +38,7 @@ pub struct HttpDate {
 /// Supports the preferred IMF-fixdate and the legacy RFC 805 and
 /// ascdate formats. Two digit years are mapped to dates between
 /// 1970 and 2069.
+#[allow(dead_code)]
 pub(crate) fn parse_http_date(s: &str) -> Result<SystemTime, Error> {
     s.parse::<HttpDate>().map(|d| d.into())
 }
