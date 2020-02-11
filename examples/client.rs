@@ -1,4 +1,3 @@
-
 use async_h1::client;
 use async_std::net::{TcpStream};
 use http_types::{Error, Method, Request, Url};

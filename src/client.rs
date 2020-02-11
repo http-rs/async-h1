@@ -49,7 +49,7 @@ impl Encoder {
     }
 }
 
-/// Send an HTTP request over a stream.
+/// Opens an HTTP/1.1 connection to a remote host.
 pub async fn connect<RW>(mut stream: RW, req: Request) -> Result<Response, Error>
 where
     RW: Read + Write + Send + Sync + Unpin + 'static,

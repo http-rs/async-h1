@@ -24,8 +24,71 @@
 //!
 //! # Example
 //!
+//! __HTTP client__
+//!
+//! ```no_run
+//! use async_h1::client;
+//! use async_std::net::{TcpStream};
+//! use http_types::{Error, Method, Request, Url};
+//! 
+//! #[async_std::main]
+//! async fn main() -> Result<(), Error> {
+//!     let stream = TcpStream::connect("127.0.0.1:8080").await?;
+//!     let peer_addr = stream.peer_addr()?;
+//!     println!("connecting to {}", peer_addr);
+//! 
+//!     for i in 0usize..2 {
+//!         println!("making request {}/2", i + 1);
+//!         let url = Url::parse(&format!("http://{}/foo", peer_addr)).unwrap();
+//!         let req = Request::new(Method::Get, dbg!(url));
+//!         let res = client::connect(stream.clone(), req).await?;
+//!         println!("{:?}", res);
+//!     }
+//!     Ok(())
+//! }
 //! ```
-//! // tbi
+//!
+//! __HTTP Server__
+//!
+//! ```no_run
+//! use async_std::net::{TcpStream, TcpListener};
+//! use async_std::prelude::*;
+//! use async_std::task;
+//! use http_types::{Response, StatusCode};
+//! 
+//! #[async_std::main]
+//! async fn main() -> http_types::Result<()> {
+//!     // Open up a TCP connection and create a URL.
+//!     let listener = TcpListener::bind(("127.0.0.1", 8080)).await?;
+//!     let addr = format!("http://{}", listener.local_addr()?);
+//!     println!("listening on {}", addr);
+//! 
+//!     // For each incoming TCP connection, spawn a task and call `accept`.
+//!     let mut incoming = listener.incoming();
+//!     while let Some(stream) = incoming.next().await {
+//!         let stream = stream?;
+//!         let addr = addr.clone();
+//!         task::spawn(async {
+//!             if let Err(err) = accept(addr, stream).await {
+//!                 eprintln!("{}", err);
+//!             }
+//!         });
+//!     }
+//!     Ok(())
+//! }
+//! 
+//! // Take a TCP stream, and convert it into sequential HTTP request / response pairs.
+//! async fn accept(addr: String, stream: TcpStream) -> http_types::Result<()> {
+//!     println!("starting new connection from {}", stream.peer_addr()?);
+//!     async_h1::accept(&addr, stream.clone(), |_req| async move {
+//!         let mut res = Response::new(StatusCode::Ok);
+//!         res.insert_header("Content-Type", "text/plain")?;
+//!         res.set_body("Hello");
+//!         Ok(res)
+//!     })
+//!     .await?;
+//!     Ok(())
+//! }
 //! ```
 
 // #![forbid(unsafe_code, rust_2018_idioms)]
