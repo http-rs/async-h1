@@ -20,7 +20,7 @@ use crate::MAX_HEADERS;
 const CR: u8 = b'\r';
 const LF: u8 = b'\n';
 
-/// Parse an incoming HTTP connection.
+/// Accept a new incoming HTTP/1.1 connection.
 ///
 /// Supports `KeepAlive` requests by default.
 pub async fn accept<RW, F, Fut>(addr: &str, mut io: RW, endpoint: F) -> http_types::Result<()>

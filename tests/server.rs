@@ -1,4 +1,3 @@
-use async_h1::server;
 use async_std::io::Cursor;
 use async_std::prelude::*;
 use common::TestCase;
@@ -11,7 +10,7 @@ async fn test_basic_request() {
     let case = TestCase::new_server("fixtures/request1.txt", "fixtures/response1.txt").await;
     let addr = "http://example.com";
 
-    server::accept(addr, case.clone(), |_req| async {
+    async_h1::accept(addr, case.clone(), |_req| async {
         let mut resp = Response::new(StatusCode::Ok);
         resp.set_body("");
         Ok(resp)
@@ -31,7 +30,7 @@ async fn test_chunked_basic() {
     .await;
     let addr = "http://example.com";
 
-    server::accept(addr, case.clone(), |_req| async {
+    async_h1::accept(addr, case.clone(), |_req| async {
         let mut resp = Response::new(StatusCode::Ok);
         resp.set_body(Body::from_reader(
             Cursor::new(b"Mozilla")
@@ -57,7 +56,7 @@ async fn test_chunked_echo() {
     .await;
     let addr = "http://example.com";
 
-    server::accept(addr, case.clone(), |req| async {
+    async_h1::accept(addr, case.clone(), |req| async {
         let mut resp = Response::new(StatusCode::Ok);
         let ct = req.content_type();
         let body: Body = req.into();

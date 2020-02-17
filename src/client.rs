@@ -18,6 +18,7 @@ use crate::date::fmt_http_date;
 use crate::MAX_HEADERS;
 
 /// An HTTP encoder.
+#[doc(hidden)]
 #[derive(Debug)]
 pub struct Encoder {
     /// Keep track how far we've indexed into the headers + body.
@@ -48,7 +49,7 @@ impl Encoder {
     }
 }
 
-/// Send an HTTP request over a stream.
+/// Opens an HTTP/1.1 connection to a remote host.
 pub async fn connect<RW>(mut stream: RW, req: Request) -> Result<Response, Error>
 where
     RW: Read + Write + Send + Sync + Unpin + 'static,
@@ -65,7 +66,8 @@ where
 }
 
 /// Encode an HTTP request on the client.
-pub async fn encode(req: Request) -> Result<Encoder, Error> {
+#[doc(hidden)]
+async fn encode(req: Request) -> Result<Encoder, Error> {
     let mut buf: Vec<u8> = vec![];
 
     let mut url = req.url().path().to_owned();
@@ -132,6 +134,7 @@ pub async fn encode(req: Request) -> Result<Encoder, Error> {
 }
 
 /// Decode an HTTP response on the client.
+#[doc(hidden)]
 pub async fn decode<R>(reader: R) -> Result<Response, Error>
 where
     R: Read + Unpin + Send + Sync + 'static,
