@@ -11,7 +11,8 @@ use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
 use http_types::headers::{HeaderName, HeaderValue, CONTENT_LENGTH, TRANSFER_ENCODING};
-use http_types::{Body, Error, ErrorKind, Method, Request, Response, StatusCode};
+use http_types::{ensure, ensure_eq, format_err};
+use http_types::{Body, Method, Request, Response};
 
 use crate::chunked::ChunkedDecoder;
 use crate::date::fmt_http_date;
@@ -27,7 +28,7 @@ pub async fn accept<RW, F, Fut>(addr: &str, mut io: RW, endpoint: F) -> http_typ
 where
     RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
     F: Fn(Request) -> Fut,
-    Fut: Future<Output = Result<Response, Error>>,
+    Fut: Future<Output = http_types::Result<Response>>,
 {
     // TODO: make configurable
     let timeout_duration = Duration::from_secs(10);
@@ -335,7 +336,7 @@ impl Read for Encoder {
 const HTTP_1_1_VERSION: u8 = 1;
 
 /// Decode an HTTP request on the server.
-async fn decode<R>(addr: &str, reader: R) -> Result<Option<Request>, Error>
+async fn decode<R>(addr: &str, reader: R) -> http_types::Result<Option<Request>>
 where
     R: Read + Unpin + Send + Sync + 'static,
 {
@@ -362,23 +363,19 @@ where
     // Convert our header buf into an httparse instance, and validate.
     let status = httparse_req.parse(&buf)?;
 
-    let err = |msg| Error::from_str(ErrorKind::InvalidData, msg, StatusCode::BadRequest);
+    ensure!(!status.is_partial(), "Malformed HTTP head");
 
-    if status.is_partial() {
-        return Err(err("Malformed HTTP head"));
-    }
+    // Convert httparse headers + body into a `http_types::Request` type.
+    let method = httparse_req.method;
+    let method = method.ok_or_else(|| format_err!("No method found"))?;
 
-    // Convert httparse headers + body into a `http::Request` type.
-    let method = httparse_req.method.ok_or_else(|| err("No method found"))?;
-    let uri = httparse_req.path.ok_or_else(|| err("No uri found"))?;
+    let uri = httparse_req.path;
+    let uri = uri.ok_or_else(|| format_err!("No uri found"))?;
     let uri = url::Url::parse(&format!("{}{}", addr, uri))?;
 
-    let version = httparse_req
-        .version
-        .ok_or_else(|| err("No version found"))?;
-    if version != HTTP_1_1_VERSION {
-        return Err(err("Unsupported HTTP version"));
-    }
+    let version = httparse_req.version;
+    let version = version.ok_or_else(|| format_err!("No version found"))?;
+    ensure_eq!(version, HTTP_1_1_VERSION, "Unsupported HTTP version");
 
     let mut req = Request::new(Method::from_str(method)?, uri);
     for header in httparse_req.headers.iter() {
@@ -390,40 +387,26 @@ where
     let content_length = req.header(&CONTENT_LENGTH);
     let transfer_encoding = req.header(&TRANSFER_ENCODING);
 
-    if content_length.is_some() && transfer_encoding.is_some() {
-        // This is always an error.
-        return Err(Error::from_str(
-            ErrorKind::InvalidData,
-            "Unexpected Content-Length header",
-            StatusCode::BadRequest,
-        ));
-    }
+    http_types::ensure!(
+        content_length.is_none() || transfer_encoding.is_none(),
+        "Unexpected Content-Length header"
+    );
 
     // Check for Transfer-Encoding
-    match transfer_encoding {
-        Some(encoding) if !encoding.is_empty() => {
-            if encoding.last().unwrap().as_str() == "chunked" {
-                let trailer_sender = req.send_trailers();
-                req.set_body(Body::from_reader(
-                    BufReader::new(ChunkedDecoder::new(reader, trailer_sender)),
-                    None,
-                ));
-                return Ok(Some(req));
-            }
-            // Fall through to Content-Length
+    if let Some(encoding) = transfer_encoding {
+        if !encoding.is_empty() && encoding.last().unwrap().as_str() == "chunked" {
+            let trailer_sender = req.send_trailers();
+            let reader = BufReader::new(ChunkedDecoder::new(reader, trailer_sender));
+            req.set_body(Body::from_reader(reader, None));
+            return Ok(Some(req));
         }
-        _ => {
-            // Fall through to Content-Length
-        }
+        // Fall through to Content-Length
     }
 
     // Check for Content-Length.
-    match content_length {
-        Some(len) => {
-            let len = len.last().unwrap().as_str().parse::<usize>()?;
-            req.set_body(Body::from_reader(reader.take(len as u64), Some(len)));
-        }
-        None => {}
+    if let Some(len) = content_length {
+        let len = len.last().unwrap().as_str().parse::<usize>()?;
+        req.set_body(Body::from_reader(reader.take(len as u64), Some(len)));
     }
 
     Ok(Some(req))
