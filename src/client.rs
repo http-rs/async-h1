@@ -146,7 +146,7 @@ where
     loop {
         let bytes_read = reader.read_until(b'\n', &mut buf).await?;
         // No more bytes are yielded from the stream.
-        assert_eq!(bytes_read, 0, "Empty response"); // TODO: ensure_eq?
+        assert!(bytes_read != 0, "Empty response"); // TODO: ensure?
 
         // We've hit the end delimiter of the stream.
         let idx = buf.len() - 1;
@@ -184,7 +184,7 @@ where
     let transfer_encoding = res.header(&TRANSFER_ENCODING);
 
     http_types::ensure!(
-        content_length.is_some() && transfer_encoding.is_some(),
+        content_length.is_none() || transfer_encoding.is_none(),
         "Unexpected Content-Length header"
     );
 

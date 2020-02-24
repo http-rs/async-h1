@@ -113,7 +113,7 @@ fn parse_imf_fixdate(s: &[u8]) -> Result<HttpDate, Error> {
 fn parse_rfc850_date(s: &[u8]) -> Result<HttpDate, Error> {
     // Example: `Sunday, 06-Nov-94 08:49:37 GMT`
     ensure!(
-        s.len() < RFC850_MAX_LENGTH,
+        s.len() >= RFC850_MAX_LENGTH,
         "Date time not in rfc850 format"
     );
 

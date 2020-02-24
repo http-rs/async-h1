@@ -363,7 +363,7 @@ where
     // Convert our header buf into an httparse instance, and validate.
     let status = httparse_req.parse(&buf)?;
 
-    ensure!(status.is_partial(), "Malformed HTTP head");
+    ensure!(!status.is_partial(), "Malformed HTTP head");
 
     // Convert httparse headers + body into a `http::Request` type.
     let method = httparse_req.method;
@@ -389,7 +389,7 @@ where
     let transfer_encoding = req.header(&TRANSFER_ENCODING);
 
     http_types::ensure!(
-        content_length.is_some() && transfer_encoding.is_some(),
+        content_length.is_none() || transfer_encoding.is_none(),
         "Unexpected Content-Length header"
     );
 
