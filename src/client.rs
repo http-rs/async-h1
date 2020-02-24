@@ -4,7 +4,7 @@ use async_std::io::{self, BufReader, Read, Write};
 use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
-use http_types::Error;
+use http_types::{ensure, ensure_eq, format_err, Error};
 use http_types::{
     headers::{HeaderName, HeaderValue, CONTENT_LENGTH, DATE, TRANSFER_ENCODING},
     Body, Request, Response, StatusCode,
@@ -87,10 +87,8 @@ async fn encode(req: Request) -> http_types::Result<Encoder> {
 
     // Insert Host header
     // Insert host
-    let host = req
-        .url()
-        .host_str()
-        .ok_or_else(|| http_types::format_err!("Missing hostname"))?;
+    let host = req.url().host_str();
+    let host = host.ok_or_else(|| format_err!("Missing hostname"))?;
     let val = if let Some(port) = req.url().port() {
         format!("host: {}:{}\r\n", host, port)
     } else {
@@ -157,16 +155,15 @@ where
 
     // Convert our header buf into an httparse instance, and validate.
     let status = httparse_res.parse(&buf)?;
-    http_types::ensure!(!status.is_partial(), "Malformed HTTP head");
+    ensure!(!status.is_partial(), "Malformed HTTP head");
 
     let code = httparse_res.code;
-    let code = code.ok_or_else(|| http_types::format_err!("No status code found"))?;
+    let code = code.ok_or_else(|| format_err!("No status code found"))?;
 
     // Convert httparse headers + body into a `http::Response` type.
     let version = httparse_res.version;
-    let version = version.ok_or_else(|| http_types::format_err!("No version found"))?;
-
-    http_types::ensure!(version == 1, "Unsupported HTTP version");
+    let version = version.ok_or_else(|| format_err!("No version found"))?;
+    ensure_eq!(version, 1, "Unsupported HTTP version");
 
     let mut res = Response::new(StatusCode::try_from(code)?);
     for header in httparse_res.headers.iter() {
@@ -183,7 +180,7 @@ where
     let content_length = res.header(&CONTENT_LENGTH);
     let transfer_encoding = res.header(&TRANSFER_ENCODING);
 
-    http_types::ensure!(
+    ensure!(
         content_length.is_none() || transfer_encoding.is_none(),
         "Unexpected Content-Length header"
     );
@@ -193,10 +190,8 @@ where
         Some(encoding) if !encoding.is_empty() => {
             if encoding.last().unwrap().as_str() == "chunked" {
                 let trailers_sender = res.send_trailers();
-                res.set_body(Body::from_reader(
-                    BufReader::new(ChunkedDecoder::new(reader, trailers_sender)),
-                    None,
-                ));
+                let reader = BufReader::new(ChunkedDecoder::new(reader, trailers_sender));
+                res.set_body(Body::from_reader(reader, None));
                 return Ok(res);
             }
             // Fall through to Content-Length

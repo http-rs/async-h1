@@ -373,9 +373,8 @@ where
     let uri = uri.ok_or_else(|| format_err!("No uri found"))?;
     let uri = url::Url::parse(&format!("{}{}", addr, uri))?;
 
-    let version = httparse_req
-        .version
-        .ok_or_else(|| format_err!("No version found"))?;
+    let version = httparse_req.version;
+    let version = version.ok_or_else(|| format_err!("No version found"))?;
     ensure_eq!(version, HTTP_1_1_VERSION, "Unsupported HTTP version");
 
     let mut req = Request::new(Method::from_str(method)?, uri);
@@ -398,10 +397,8 @@ where
         Some(encoding) if !encoding.is_empty() => {
             if encoding.last().unwrap().as_str() == "chunked" {
                 let trailer_sender = req.send_trailers();
-                req.set_body(Body::from_reader(
-                    BufReader::new(ChunkedDecoder::new(reader, trailer_sender)),
-                    None,
-                ));
+                let reader = BufReader::new(ChunkedDecoder::new(reader, trailer_sender));
+                req.set_body(Body::from_reader(reader, None));
                 return Ok(Some(req));
             }
             // Fall through to Content-Length
@@ -412,12 +409,9 @@ where
     }
 
     // Check for Content-Length.
-    match content_length {
-        Some(len) => {
-            let len = len.last().unwrap().as_str().parse::<usize>()?;
-            req.set_body(Body::from_reader(reader.take(len as u64), Some(len)));
-        }
-        None => {}
+    if let Some(len) = content_length {
+        let len = len.last().unwrap().as_str().parse::<usize>()?;
+        req.set_body(Body::from_reader(reader.take(len as u64), Some(len)));
     }
 
     Ok(Some(req))
