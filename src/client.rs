@@ -160,7 +160,7 @@ where
     let code = httparse_res.code;
     let code = code.ok_or_else(|| format_err!("No status code found"))?;
 
-    // Convert httparse headers + body into a `http::Response` type.
+    // Convert httparse headers + body into a `http_types::Response` type.
     let version = httparse_res.version;
     let version = version.ok_or_else(|| format_err!("No version found"))?;
     ensure_eq!(version, 1, "Unsupported HTTP version");

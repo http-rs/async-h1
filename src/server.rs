@@ -365,7 +365,7 @@ where
 
     ensure!(!status.is_partial(), "Malformed HTTP head");
 
-    // Convert httparse headers + body into a `http::Request` type.
+    // Convert httparse headers + body into a `http_types::Request` type.
     let method = httparse_req.method;
     let method = method.ok_or_else(|| format_err!("No method found"))?;
 
