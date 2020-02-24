@@ -393,19 +393,14 @@ where
     );
 
     // Check for Transfer-Encoding
-    match transfer_encoding {
-        Some(encoding) if !encoding.is_empty() => {
-            if encoding.last().unwrap().as_str() == "chunked" {
-                let trailer_sender = req.send_trailers();
-                let reader = BufReader::new(ChunkedDecoder::new(reader, trailer_sender));
-                req.set_body(Body::from_reader(reader, None));
-                return Ok(Some(req));
-            }
-            // Fall through to Content-Length
+    if let Some(encoding) = transfer_encoding {
+        if !encoding.is_empty() && encoding.last().unwrap().as_str() == "chunked" {
+            let trailer_sender = req.send_trailers();
+            let reader = BufReader::new(ChunkedDecoder::new(reader, trailer_sender));
+            req.set_body(Body::from_reader(reader, None));
+            return Ok(Some(req));
         }
-        _ => {
-            // Fall through to Content-Length
-        }
+        // Fall through to Content-Length
     }
 
     // Check for Content-Length.
