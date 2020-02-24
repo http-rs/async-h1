@@ -11,7 +11,8 @@ use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
 use http_types::headers::{HeaderName, HeaderValue, CONTENT_LENGTH, TRANSFER_ENCODING};
-use http_types::{Body, Error, ErrorKind, Method, Request, Response, StatusCode};
+use http_types::{ensure, ensure_eq, format_err};
+use http_types::{Body, Error, Method, Request, Response};
 
 use crate::chunked::ChunkedDecoder;
 use crate::date::fmt_http_date;
@@ -362,23 +363,20 @@ where
     // Convert our header buf into an httparse instance, and validate.
     let status = httparse_req.parse(&buf)?;
 
-    let err = |msg| Error::from_str(ErrorKind::InvalidData, msg, StatusCode::BadRequest);
-
-    if status.is_partial() {
-        return Err(err("Malformed HTTP head"));
-    }
+    ensure!(status.is_partial(), "Malformed HTTP head");
 
     // Convert httparse headers + body into a `http::Request` type.
-    let method = httparse_req.method.ok_or_else(|| err("No method found"))?;
-    let uri = httparse_req.path.ok_or_else(|| err("No uri found"))?;
+    let method = httparse_req.method;
+    let method = method.ok_or_else(|| format_err!("No method found"))?;
+
+    let uri = httparse_req.path;
+    let uri = uri.ok_or_else(|| format_err!("No uri found"))?;
     let uri = url::Url::parse(&format!("{}{}", addr, uri))?;
 
     let version = httparse_req
         .version
-        .ok_or_else(|| err("No version found"))?;
-    if version != HTTP_1_1_VERSION {
-        return Err(err("Unsupported HTTP version"));
-    }
+        .ok_or_else(|| format_err!("No version found"))?;
+    ensure_eq!(version, HTTP_1_1_VERSION, "Unsupported HTTP version");
 
     let mut req = Request::new(Method::from_str(method)?, uri);
     for header in httparse_req.headers.iter() {
@@ -390,14 +388,10 @@ where
     let content_length = req.header(&CONTENT_LENGTH);
     let transfer_encoding = req.header(&TRANSFER_ENCODING);
 
-    if content_length.is_some() && transfer_encoding.is_some() {
-        // This is always an error.
-        return Err(Error::from_str(
-            ErrorKind::InvalidData,
-            "Unexpected Content-Length header",
-            StatusCode::BadRequest,
-        ));
-    }
+    http_types::ensure!(
+        content_length.is_some() && transfer_encoding.is_some(),
+        "Unexpected Content-Length header"
+    );
 
     // Check for Transfer-Encoding
     match transfer_encoding {

@@ -4,12 +4,13 @@ use async_std::io::{self, BufReader, Read, Write};
 use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
+use http_types::Error;
 use http_types::{
     headers::{HeaderName, HeaderValue, CONTENT_LENGTH, DATE, TRANSFER_ENCODING},
     Body, Request, Response, StatusCode,
 };
-use http_types::{Error, ErrorKind};
 
+use std::convert::TryFrom;
 use std::pin::Pin;
 use std::str::FromStr;
 
@@ -50,7 +51,7 @@ impl Encoder {
 }
 
 /// Opens an HTTP/1.1 connection to a remote host.
-pub async fn connect<RW>(mut stream: RW, req: Request) -> Result<Response, Error>
+pub async fn connect<RW>(mut stream: RW, req: Request) -> http_types::Result<Response>
 where
     RW: Read + Write + Send + Sync + Unpin + 'static,
 {
@@ -67,7 +68,7 @@ where
 
 /// Encode an HTTP request on the client.
 #[doc(hidden)]
-async fn encode(req: Request) -> Result<Encoder, Error> {
+async fn encode(req: Request) -> http_types::Result<Encoder> {
     let mut buf: Vec<u8> = vec![];
 
     let mut url = req.url().path().to_owned();
@@ -86,13 +87,10 @@ async fn encode(req: Request) -> Result<Encoder, Error> {
 
     // Insert Host header
     // Insert host
-    let host = req.url().host_str().ok_or_else(|| {
-        Error::from_str(
-            ErrorKind::InvalidInput,
-            "missing hostname",
-            StatusCode::BadRequest,
-        )
-    })?;
+    let host = req
+        .url()
+        .host_str()
+        .ok_or_else(|| http_types::format_err!("Missing hostname"))?;
     let val = if let Some(port) = req.url().port() {
         format!("host: {}:{}\r\n", host, port)
     } else {
@@ -148,9 +146,7 @@ where
     loop {
         let bytes_read = reader.read_until(b'\n', &mut buf).await?;
         // No more bytes are yielded from the stream.
-        if bytes_read == 0 {
-            panic!("empty response");
-        }
+        assert_eq!(bytes_read, 0, "Empty response"); // TODO: ensure_eq?
 
         // We've hit the end delimiter of the stream.
         let idx = buf.len() - 1;
@@ -161,37 +157,17 @@ where
 
     // Convert our header buf into an httparse instance, and validate.
     let status = httparse_res.parse(&buf)?;
-    if status.is_partial() {
-        return Err(Error::from_str(
-            ErrorKind::InvalidData,
-            "Malformed HTTP head",
-            StatusCode::BadRequest,
-        ));
-    }
-    let code = httparse_res.code.ok_or_else(|| {
-        Error::from_str(
-            ErrorKind::InvalidData,
-            "No status code found",
-            StatusCode::BadRequest,
-        )
-    })?;
+    http_types::ensure!(!status.is_partial(), "Malformed HTTP head");
+
+    let code = httparse_res.code;
+    let code = code.ok_or_else(|| http_types::format_err!("No status code found"))?;
 
     // Convert httparse headers + body into a `http::Response` type.
-    let version = httparse_res.version.ok_or_else(|| {
-        Error::from_str(
-            ErrorKind::InvalidData,
-            "No version found",
-            StatusCode::BadRequest,
-        )
-    })?;
-    if version != 1 {
-        return Err(Error::from_str(
-            ErrorKind::InvalidData,
-            "Unsupported HTTP version",
-            StatusCode::BadRequest,
-        ));
-    }
-    use std::convert::TryFrom;
+    let version = httparse_res.version;
+    let version = version.ok_or_else(|| http_types::format_err!("No version found"))?;
+
+    http_types::ensure!(version == 1, "Unsupported HTTP version");
+
     let mut res = Response::new(StatusCode::try_from(code)?);
     for header in httparse_res.headers.iter() {
         let name = HeaderName::from_str(header.name)?;
@@ -207,14 +183,10 @@ where
     let content_length = res.header(&CONTENT_LENGTH);
     let transfer_encoding = res.header(&TRANSFER_ENCODING);
 
-    if content_length.is_some() && transfer_encoding.is_some() {
-        // This is always an error.
-        return Err(Error::from_str(
-            ErrorKind::InvalidData,
-            "Unexpected Content-Length header",
-            StatusCode::BadRequest,
-        ));
-    }
+    http_types::ensure!(
+        content_length.is_some() && transfer_encoding.is_some(),
+        "Unexpected Content-Length header"
+    );
 
     // Check for Transfer-Encoding
     match transfer_encoding {
