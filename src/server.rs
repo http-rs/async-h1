@@ -12,7 +12,7 @@ use async_std::task::{Context, Poll};
 use futures_core::ready;
 use http_types::headers::{HeaderName, HeaderValue, CONTENT_LENGTH, TRANSFER_ENCODING};
 use http_types::{ensure, ensure_eq, format_err};
-use http_types::{Body, Error, Method, Request, Response};
+use http_types::{Body, Method, Request, Response};
 
 use crate::chunked::ChunkedDecoder;
 use crate::date::fmt_http_date;
@@ -28,7 +28,7 @@ pub async fn accept<RW, F, Fut>(addr: &str, mut io: RW, endpoint: F) -> http_typ
 where
     RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
     F: Fn(Request) -> Fut,
-    Fut: Future<Output = Result<Response, Error>>,
+    Fut: Future<Output = http_types::Result<Response>>,
 {
     // TODO: make configurable
     let timeout_duration = Duration::from_secs(10);
@@ -336,7 +336,7 @@ impl Read for Encoder {
 const HTTP_1_1_VERSION: u8 = 1;
 
 /// Decode an HTTP request on the server.
-async fn decode<R>(addr: &str, reader: R) -> Result<Option<Request>, Error>
+async fn decode<R>(addr: &str, reader: R) -> http_types::Result<Option<Request>>
 where
     R: Read + Unpin + Send + Sync + 'static,
 {

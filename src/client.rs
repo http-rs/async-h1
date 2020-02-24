@@ -4,7 +4,7 @@ use async_std::io::{self, BufReader, Read, Write};
 use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use futures_core::ready;
-use http_types::{ensure, ensure_eq, format_err, Error};
+use http_types::{ensure, ensure_eq, format_err};
 use http_types::{
     headers::{HeaderName, HeaderValue, CONTENT_LENGTH, DATE, TRANSFER_ENCODING},
     Body, Request, Response, StatusCode,
@@ -131,7 +131,7 @@ async fn encode(req: Request) -> http_types::Result<Encoder> {
 
 /// Decode an HTTP response on the client.
 #[doc(hidden)]
-pub async fn decode<R>(reader: R) -> Result<Response, Error>
+pub async fn decode<R>(reader: R) -> http_types::Result<Response>
 where
     R: Read + Unpin + Send + Sync + 'static,
 {

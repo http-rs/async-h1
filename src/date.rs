@@ -2,7 +2,7 @@ use std::fmt::{self, Display, Formatter};
 use std::str::{from_utf8, FromStr};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use http_types::{bail, ensure, format_err, Error};
+use http_types::{bail, ensure, format_err};
 
 const IMF_FIXDATE_LENGTH: usize = 29;
 const RFC850_MAX_LENGTH: usize = 23;
@@ -39,7 +39,7 @@ pub struct HttpDate {
 /// ascdate formats. Two digit years are mapped to dates between
 /// 1970 and 2069.
 #[allow(dead_code)]
-pub(crate) fn parse_http_date(s: &str) -> Result<SystemTime, Error> {
+pub(crate) fn parse_http_date(s: &str) -> http_types::Result<SystemTime> {
     s.parse::<HttpDate>().map(|d| d.into())
 }
 
@@ -66,7 +66,7 @@ impl HttpDate {
     }
 }
 
-fn parse_imf_fixdate(s: &[u8]) -> Result<HttpDate, Error> {
+fn parse_imf_fixdate(s: &[u8]) -> http_types::Result<HttpDate> {
     // Example: `Sun, 06 Nov 1994 08:49:37 GMT`
     if s.len() != IMF_FIXDATE_LENGTH
         || &s[25..] != b" GMT"
@@ -110,7 +110,7 @@ fn parse_imf_fixdate(s: &[u8]) -> Result<HttpDate, Error> {
     })
 }
 
-fn parse_rfc850_date(s: &[u8]) -> Result<HttpDate, Error> {
+fn parse_rfc850_date(s: &[u8]) -> http_types::Result<HttpDate> {
     // Example: `Sunday, 06-Nov-94 08:49:37 GMT`
     ensure!(
         s.len() >= RFC850_MAX_LENGTH,
@@ -165,7 +165,7 @@ fn parse_rfc850_date(s: &[u8]) -> Result<HttpDate, Error> {
     })
 }
 
-fn parse_asctime(s: &[u8]) -> Result<HttpDate, Error> {
+fn parse_asctime(s: &[u8]) -> http_types::Result<HttpDate> {
     // Example: `Sun Nov  6 08:49:37 1994`
     if s.len() != ASCTIME_LENGTH || s[10] != b' ' || s[13] != b':' || s[16] != b':' || s[19] != b' '
     {
@@ -326,7 +326,7 @@ impl From<HttpDate> for SystemTime {
 }
 
 impl FromStr for HttpDate {
-    type Err = Error;
+    type Err = http_types::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         ensure!(s.is_ascii(), "String slice is not valid ASCII");
