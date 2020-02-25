@@ -2,7 +2,7 @@
 name = "async-h1"
 version = "1.0.0"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/rustasync/async-h1"
+repository = "https://github.com/http-rs/async-h1"
 documentation = "https://docs.rs/async-h1"
 description = "Asynchronous HTTP 1.1 parser."
 keywords = ["async", "http", "stream", "parser", "http1"]
