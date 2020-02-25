@@ -1,4 +1,4 @@
-use async_std::net::{TcpStream, TcpListener};
+use async_std::net::{TcpListener, TcpStream};
 use async_std::prelude::*;
 use async_std::task;
 use http_types::{Response, StatusCode};
