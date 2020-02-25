@@ -30,13 +30,13 @@
 //! use async_h1::client;
 //! use async_std::net::{TcpStream};
 //! use http_types::{Error, Method, Request, Url};
-//! 
+//!
 //! #[async_std::main]
 //! async fn main() -> Result<(), Error> {
 //!     let stream = TcpStream::connect("127.0.0.1:8080").await?;
 //!     let peer_addr = stream.peer_addr()?;
 //!     println!("connecting to {}", peer_addr);
-//! 
+//!
 //!     for i in 0usize..2 {
 //!         println!("making request {}/2", i + 1);
 //!         let url = Url::parse(&format!("http://{}/foo", peer_addr)).unwrap();
@@ -55,14 +55,14 @@
 //! use async_std::prelude::*;
 //! use async_std::task;
 //! use http_types::{Response, StatusCode};
-//! 
+//!
 //! #[async_std::main]
 //! async fn main() -> http_types::Result<()> {
 //!     // Open up a TCP connection and create a URL.
 //!     let listener = TcpListener::bind(("127.0.0.1", 8080)).await?;
 //!     let addr = format!("http://{}", listener.local_addr()?);
 //!     println!("listening on {}", addr);
-//! 
+//!
 //!     // For each incoming TCP connection, spawn a task and call `accept`.
 //!     let mut incoming = listener.incoming();
 //!     while let Some(stream) = incoming.next().await {
@@ -76,7 +76,7 @@
 //!     }
 //!     Ok(())
 //! }
-//! 
+//!
 //! // Take a TCP stream, and convert it into sequential HTTP request / response pairs.
 //! async fn accept(addr: String, stream: TcpStream) -> http_types::Result<()> {
 //!     println!("starting new connection from {}", stream.peer_addr()?);
@@ -99,9 +99,9 @@
 /// The maximum amount of headers parsed on the server.
 const MAX_HEADERS: usize = 128;
 
-mod server;
 mod chunked;
 mod date;
+mod server;
 
 #[doc(hidden)]
 pub mod client;
