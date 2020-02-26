@@ -47,7 +47,7 @@ $ cargo add async-h1
 ```
 
 ## Safety
-This crate uses ``#![deny(unsafe_code)]`` to ensure everything is implemented in
+This crate uses ``#![forbid(unsafe_code)]`` to ensure everything is implemented in
 100% Safe Rust.
 
 ## Contributing
