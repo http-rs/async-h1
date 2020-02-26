@@ -16,7 +16,7 @@ use http_types::{Body, Method, Request, Response};
 
 use crate::chunked::ChunkedDecoder;
 use crate::date::fmt_http_date;
-use crate::{MAX_HEADERS, MAX_HEADER_LENGTH};
+use crate::{MAX_HEADERS, MAX_HEAD_LENGTH};
 
 const CR: u8 = b'\r';
 const LF: u8 = b'\n';
@@ -353,10 +353,10 @@ where
             return Ok(None);
         }
 
-        // Prevent CWE-400 DDOS with Large HTTP Headers.
+        // Prevent CWE-400 DDOS with large HTTP Headers.
         ensure!(
-            buf.len() < MAX_HEADER_LENGTH,
-            "Header byte length limit exceeded"
+            buf.len() < MAX_HEAD_LENGTH,
+            "Head byte length limit exceeded"
         );
 
         // We've hit the end delimiter of the stream.
