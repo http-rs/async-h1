@@ -356,7 +356,7 @@ where
         // Prevent CWE-400 DDOS with large HTTP Headers.
         ensure!(
             buf.len() < MAX_HEAD_LENGTH,
-            "Head byte length limit exceeded"
+            "Head byte length should be less than 8kb"
         );
 
         // We've hit the end delimiter of the stream.
