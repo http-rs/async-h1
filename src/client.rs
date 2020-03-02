@@ -16,7 +16,7 @@ use std::str::FromStr;
 
 use crate::chunked::ChunkedDecoder;
 use crate::date::fmt_http_date;
-use crate::MAX_HEADERS;
+use crate::{MAX_HEADERS, MAX_HEAD_LENGTH};
 
 /// An HTTP encoder.
 #[doc(hidden)]
@@ -145,6 +145,12 @@ where
         let bytes_read = reader.read_until(b'\n', &mut buf).await?;
         // No more bytes are yielded from the stream.
         assert!(bytes_read != 0, "Empty response"); // TODO: ensure?
+
+        // Prevent CWE-400 DDOS with large HTTP Headers.
+        ensure!(
+            buf.len() < MAX_HEAD_LENGTH,
+            "Head byte length should be less than 8kb"
+        );
 
         // We've hit the end delimiter of the stream.
         let idx = buf.len() - 1;
