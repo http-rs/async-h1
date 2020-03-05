@@ -72,3 +72,19 @@ async fn test_chunked_echo() {
 
     case.assert().await;
 }
+
+#[async_std::test]
+async fn large_file() {
+    let case = TestCase::new_server("fixtures/large.txt", "fixtures/large.txt").await;
+    let addr = "http://example.com";
+
+    async_h1::accept(addr, case.clone(), |req| async {
+        let mut res = Response::new(StatusCode::Ok);
+        res.set_body(req);
+        Ok(res)
+    })
+    .await
+    .unwrap();
+
+    case.assert().await;
+}

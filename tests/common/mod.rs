@@ -92,8 +92,8 @@ impl TestCase {
     pub(crate) async fn assert(self) {
         let mut actual = self.read_result().await;
         let mut expected = self.read_expected().await;
-        assert!(!actual.is_empty(), "Received empty reply");
         assert!(!expected.is_empty(), "Missing expected fixture");
+        assert!(!actual.is_empty(), "Received empty reply");
 
         // munge actual and expected so that we don't rely on dates matching exactly
         munge_date(&mut expected, &mut actual);
