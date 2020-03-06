@@ -30,36 +30,32 @@ where
     F: Fn(Request) -> Fut,
     Fut: Future<Output = http_types::Result<Response>>,
 {
-    // TODO: make configurable
+    // TODO: make these values configurable
     let timeout_duration = Duration::from_secs(10);
     const MAX_REQUESTS: usize = 200;
     let mut num_requests = 0;
 
-    // Decode a request. This may be the first of many since the connection is Keep-Alive by default.
-    let r = io.clone();
-    let req = decode(addr, r).await?;
+    loop {
+        // Stop parsing requests if we exceed the threshold.
+        match num_requests {
+            MAX_REQUESTS => return Ok(()),
+            _ => num_requests += 1,
+        };
 
-    if let Some(mut req) = req {
-        loop {
-            match num_requests {
-                MAX_REQUESTS => return Ok(()),
-                _ => num_requests += 1,
-            };
+        // Decode a new request, timing out if this takes longer than the
+        // timeout duration.
+        let req = match timeout(timeout_duration, decode(addr, io.clone())).await {
+            Ok(Ok(Some(r))) => r,
+            Ok(Ok(None)) | Err(TimeoutError { .. }) => break, /* EOF or timeout */
+            Ok(Err(e)) => return Err(e).into(),
+        };
 
-            // TODO: what to do when the endpoint returns Err
-            let res = endpoint(req).await?;
-            let mut encoder = Encoder::encode(res);
-            io::copy(&mut encoder, &mut io).await?;
+        // Pass the request to the endpoint and encode the response.
+        let res = endpoint(req).await?;
+        let mut encoder = Encoder::encode(res);
 
-            // Decode a new request, timing out if this takes longer than the
-            // timeout duration.
-            req = match timeout(timeout_duration, decode(addr, io.clone())).await {
-                Ok(Ok(Some(r))) => r,
-                Ok(Ok(None)) | Err(TimeoutError { .. }) => break, /* EOF or timeout */
-                Ok(Err(e)) => return Err(e).into(),
-            };
-            // Loop back with the new request and stream and start again
-        }
+        // Stream the response to the writer.
+        io::copy(&mut encoder, &mut io).await?;
     }
 
     Ok(())
