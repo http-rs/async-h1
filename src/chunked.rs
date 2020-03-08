@@ -99,6 +99,10 @@ impl<R: Read + Unpin> ChunkedDecoder<R> {
                 read += n;
                 let new_state = if new_current == len {
                     State::ChunkEnd
+                } else if n == 0 {
+                    // Unexpected end
+                    // TODO: do something?
+                    State::Done
                 } else {
                     State::Chunk(new_current, len)
                 };
@@ -279,6 +283,15 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
                         return Poll::Pending;
                     }
                 };
+                match (bytes_read, &this.state) {
+                    (0, State::Done) => {}
+                    (0, _) => {
+                        // Unexpected end
+                        // TODO: do something?
+                        this.state = State::Done;
+                    }
+                    _ => {}
+                }
                 n.end += bytes_read;
             }
             match this.poll_read_inner(cx, buffer, &n, buf)? {

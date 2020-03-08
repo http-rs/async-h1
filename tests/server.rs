@@ -72,3 +72,30 @@ async fn test_chunked_echo() {
 
     case.assert().await;
 }
+
+#[async_std::test]
+async fn test_unexpected_eof() {
+    // We can't predict unexpected EOF, so the response content-length is still 11
+    let case = TestCase::new_server(
+        "fixtures/request-unexpected-eof.txt",
+        "fixtures/response-unexpected-eof.txt",
+    )
+    .await;
+    let addr = "http://example.com";
+
+    async_h1::accept(addr, case.clone(), |req| async {
+        let mut resp = Response::new(StatusCode::Ok);
+        let ct = req.content_type();
+        let body: Body = req.into();
+        resp.set_body(body);
+        if let Some(ct) = ct {
+            resp.set_content_type(ct);
+        }
+
+        Ok(resp)
+    })
+    .await
+    .unwrap();
+
+    case.assert().await;
+}
