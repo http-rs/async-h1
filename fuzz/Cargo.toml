@@ -1,0 +1,27 @@
+
+[package]
+name = "async-h1-fuzz"
+version = "0.0.0"
+authors = ["Automatically generated"]
+publish = false
+edition = "2018"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+async-std = "1.5.0"
+http-types = "1.0.0"
+libfuzzer-sys = "0.3"
+futures-io = "0.3"
+
+[dependencies.async-h1]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "server_accept"
+path = "fuzz_targets/server_accept.rs"
