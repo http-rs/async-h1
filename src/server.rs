@@ -9,7 +9,6 @@ use async_std::io::{self, BufReader};
 use async_std::io::{Read, Write};
 use async_std::prelude::*;
 use async_std::task::{Context, Poll};
-use futures_core::ready;
 use http_types::headers::{HeaderName, HeaderValue, CONTENT_LENGTH, TRANSFER_ENCODING};
 use http_types::{ensure, ensure_eq, format_err};
 use http_types::{Body, Method, Request, Response};
@@ -198,9 +197,19 @@ impl Read for Encoder {
                     // Figure out how many bytes we can read.
                     let upper_bound = (bytes_read + body_len - body_bytes_read).min(buf.len());
                     // Read bytes from body
-                    let new_body_bytes_read =
-                        ready!(Pin::new(&mut self.res)
-                            .poll_read(cx, &mut buf[bytes_read..upper_bound]))?;
+                    let inner_poll_result =
+                        Pin::new(&mut self.res).poll_read(cx, &mut buf[bytes_read..upper_bound]);
+                    let new_body_bytes_read = match inner_poll_result {
+                        Poll::Ready(Ok(n)) => n,
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        Poll::Pending => {
+                            if bytes_read == 0 {
+                                return Poll::Pending;
+                            } else {
+                                break;
+                            }
+                        }
+                    };
                     body_bytes_read += new_body_bytes_read;
                     bytes_read += new_body_bytes_read;
 
@@ -212,8 +221,13 @@ impl Read for Encoder {
                         body_len,
                         body_bytes_read
                     );
-                    // If we've read the `len` number of bytes, end
                     if body_len == body_bytes_read {
+                        // If we've read the `len` number of bytes, end
+                        self.state = EncoderState::Done;
+                        break;
+                    } else if new_body_bytes_read == 0 {
+                        // If we've reached unexpected EOF, end anyway
+                        // TODO: do something?
                         self.state = EncoderState::Done;
                         break;
                     } else {
@@ -237,8 +251,18 @@ impl Read for Encoder {
                     // it into the actual buffer
                     let mut chunk_buf = vec![0; buffer_remaining];
                     // Read bytes from body reader
-                    let chunk_length =
-                        ready!(Pin::new(&mut self.res).poll_read(cx, &mut chunk_buf))?;
+                    let inner_poll_result = Pin::new(&mut self.res).poll_read(cx, &mut chunk_buf);
+                    let chunk_length = match inner_poll_result {
+                        Poll::Ready(Ok(n)) => n,
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        Poll::Pending => {
+                            if bytes_read == 0 {
+                                return Poll::Pending;
+                            } else {
+                                break;
+                            }
+                        }
+                    };
 
                     // serialize chunk length as hex
                     let chunk_length_string = format!("{:X}", chunk_length);
@@ -311,7 +335,18 @@ impl Read for Encoder {
                     ref mut chunk,
                     is_last,
                 } => {
-                    bytes_read += ready!(Pin::new(chunk).poll_read(cx, &mut buf))?;
+                    let inner_poll_result = Pin::new(chunk).poll_read(cx, &mut buf);
+                    bytes_read += match inner_poll_result {
+                        Poll::Ready(Ok(n)) => n,
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        Poll::Pending => {
+                            if bytes_read == 0 {
+                                return Poll::Pending;
+                            } else {
+                                break;
+                            }
+                        }
+                    };
                     if bytes_read == 0 {
                         self.state = match is_last {
                             true => EncoderState::Done,
