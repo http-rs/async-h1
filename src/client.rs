@@ -244,6 +244,7 @@ impl Read for Encoder {
                 Pin::new(&mut self.request).poll_read(cx, &mut buf[bytes_read..]);
             let n = match inner_poll_result {
                 Poll::Ready(Ok(n)) => n,
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
                 Poll::Pending => {
                     if bytes_read == 0 {
                         return Poll::Pending;
@@ -251,7 +252,6 @@ impl Read for Encoder {
                         return Poll::Ready(Ok(bytes_read as usize));
                     }
                 }
-                e => return e,
             };
             bytes_read += n;
             self.body_bytes_read += n;

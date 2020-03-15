@@ -201,6 +201,7 @@ impl Read for Encoder {
                         Pin::new(&mut self.res).poll_read(cx, &mut buf[bytes_read..upper_bound]);
                     let new_body_bytes_read = match inner_poll_result {
                         Poll::Ready(Ok(n)) => n,
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
                         Poll::Pending => {
                             if bytes_read == 0 {
                                 return Poll::Pending;
@@ -208,7 +209,6 @@ impl Read for Encoder {
                                 break;
                             }
                         }
-                        e => return e,
                     };
                     body_bytes_read += new_body_bytes_read;
                     bytes_read += new_body_bytes_read;
@@ -254,6 +254,7 @@ impl Read for Encoder {
                     let inner_poll_result = Pin::new(&mut self.res).poll_read(cx, &mut chunk_buf);
                     let chunk_length = match inner_poll_result {
                         Poll::Ready(Ok(n)) => n,
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
                         Poll::Pending => {
                             if bytes_read == 0 {
                                 return Poll::Pending;
@@ -261,7 +262,6 @@ impl Read for Encoder {
                                 break;
                             }
                         }
-                        e => return e,
                     };
 
                     // serialize chunk length as hex
@@ -338,6 +338,7 @@ impl Read for Encoder {
                     let inner_poll_result = Pin::new(chunk).poll_read(cx, &mut buf);
                     bytes_read += match inner_poll_result {
                         Poll::Ready(Ok(n)) => n,
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
                         Poll::Pending => {
                             if bytes_read == 0 {
                                 return Poll::Pending;
@@ -345,7 +346,6 @@ impl Read for Encoder {
                                 break;
                             }
                         }
-                        e => return e,
                     };
                     if bytes_read == 0 {
                         self.state = match is_last {
