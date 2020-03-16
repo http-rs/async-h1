@@ -99,3 +99,29 @@ async fn test_unexpected_eof() {
 
     case.assert().await;
 }
+
+#[async_std::test]
+async fn test_invalid_trailer() {
+    let case = TestCase::new_server(
+        "fixtures/request-invalid-trailer.txt",
+        "fixtures/response-invalid-trailer.txt",
+    )
+    .await;
+    let addr = "http://example.com";
+
+    async_h1::accept(addr, case.clone(), |req| async {
+        let mut resp = Response::new(StatusCode::Ok);
+        let ct = req.content_type();
+        let body: Body = req.into();
+        resp.set_body(body);
+        if let Some(ct) = ct {
+            resp.set_content_type(ct);
+        }
+
+        Ok(resp)
+    })
+    .await
+    .unwrap_err();
+
+    assert!(case.read_result().await.is_empty());
+}
