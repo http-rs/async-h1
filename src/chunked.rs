@@ -482,7 +482,9 @@ fn decode_trailer(buffer: Block<'static>, pos: &Range<usize>) -> io::Result<Deco
             let mut trailers = Trailers::new();
             for header in headers {
                 let value = std::string::String::from_utf8_lossy(header.value).to_string();
-                trailers.insert(header.name, value).unwrap();
+                if let Err(err) = trailers.insert(header.name, value) {
+                    return Err(io::Error::new(io::ErrorKind::Other, err.to_string()));
+                }
             }
 
             Ok(DecodeResult::Some {
