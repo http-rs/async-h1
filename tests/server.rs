@@ -7,7 +7,11 @@ mod common;
 
 #[async_std::test]
 async fn test_basic_request() {
-    let case = TestCase::new_server("fixtures/request1.txt", "fixtures/response1.txt").await;
+    let case = TestCase::new_server(
+        "fixtures/request-add-date.txt",
+        "fixtures/response-add-date.txt",
+    )
+    .await;
     let addr = "http://example.com";
 
     async_h1::accept(addr, case.clone(), |_req| async {
