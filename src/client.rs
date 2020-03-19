@@ -174,7 +174,7 @@ where
     for header in httparse_res.headers.iter() {
         let name = HeaderName::from_str(header.name)?;
         let value = HeaderValue::from_str(std::str::from_utf8(header.value)?)?;
-        res.insert_header(name, value)?;
+        res.append_header(name, value)?;
     }
 
     if res.header(&DATE).is_none() {
