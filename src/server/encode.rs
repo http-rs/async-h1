@@ -23,15 +23,16 @@ pub(crate) struct Encoder {
     state: EncoderState,
     /// Track bytes read in a call to poll_read.
     bytes_read: usize,
+    /// The data we're writing as part of the head section.
+    head: Vec<u8>,
+    /// The amount of bytes read from the head section.
+    head_bytes_read: usize,
 }
 
 #[derive(Debug)]
 enum EncoderState {
     Start,
-    Head {
-        data: Vec<u8>,
-        head_bytes_read: usize,
-    },
+    Head,
     Body {
         body_bytes_read: usize,
         body_len: usize,
@@ -51,39 +52,79 @@ impl Encoder {
             res,
             state: EncoderState::Start,
             bytes_read: 0,
+            head: vec![],
+            head_bytes_read: 0,
         }
     }
+}
 
-    fn encode_head(&self) -> io::Result<Vec<u8>> {
-        let mut head: Vec<u8> = vec![];
+impl Encoder {
+    // Encode the headers to a buffer, the first time we poll.
+    fn encode_start(&mut self) -> io::Result<()> {
+        self.state = EncoderState::Head;
 
         let reason = self.res.status().canonical_reason();
         let status = self.res.status();
         std::io::Write::write_fmt(
-            &mut head,
+            &mut self.head,
             format_args!("HTTP/1.1 {} {}\r\n", status, reason),
         )?;
 
         // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
         // send all items in chunks.
         if let Some(len) = self.res.len() {
-            std::io::Write::write_fmt(&mut head, format_args!("content-length: {}\r\n", len))?;
+            std::io::Write::write_fmt(&mut self.head, format_args!("content-length: {}\r\n", len))?;
         } else {
-            std::io::Write::write_fmt(&mut head, format_args!("transfer-encoding: chunked\r\n"))?;
+            std::io::Write::write_fmt(
+                &mut self.head,
+                format_args!("transfer-encoding: chunked\r\n"),
+            )?;
         }
 
         let date = fmt_http_date(std::time::SystemTime::now());
-        std::io::Write::write_fmt(&mut head, format_args!("date: {}\r\n", date))?;
+        std::io::Write::write_fmt(&mut self.head, format_args!("date: {}\r\n", date))?;
 
         for (header, values) in self.res.iter() {
             for value in values.iter() {
-                std::io::Write::write_fmt(&mut head, format_args!("{}: {}\r\n", header, value))?
+                std::io::Write::write_fmt(
+                    &mut self.head,
+                    format_args!("{}: {}\r\n", header, value),
+                )?
             }
         }
 
-        std::io::Write::write_fmt(&mut head, format_args!("\r\n"))?;
+        std::io::Write::write_fmt(&mut self.head, format_args!("\r\n"))?;
+        Ok(())
+    }
 
-        Ok(head)
+    /// Encode the status code + headers of the response.
+    fn encode_head(&mut self, buf: &mut [u8]) -> bool {
+        // Read from the serialized headers, url and methods.
+        let head_len = self.head.len();
+        let len = std::cmp::min(head_len - self.head_bytes_read, buf.len());
+        let range = self.head_bytes_read..self.head_bytes_read + len;
+        buf[0..len].copy_from_slice(&self.head[range]);
+        self.bytes_read += len;
+        self.head_bytes_read += len;
+
+        // If we've read the total length of the head we're done
+        // reading the head and can transition to reading the body
+        if self.head_bytes_read == head_len {
+            // The response length lets us know if we are encoding
+            // our body in chunks or not
+            self.state = match self.res.len() {
+                Some(body_len) => EncoderState::Body {
+                    body_bytes_read: 0,
+                    body_len,
+                },
+                None => EncoderState::UncomputedChunked,
+            };
+            true
+        } else {
+            // If we haven't read the entire header it means `buf` isn't
+            // big enough. Break out of loop and return from `poll_read`
+            false
+        }
     }
 }
 
@@ -93,46 +134,14 @@ impl Read for Encoder {
         cx: &mut Context<'_>,
         mut buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        // we must keep track how many bytes of the head and body we've read
+        // we keep track how many bytes of the head and body we've read
         // in this call of `poll_read`
         self.bytes_read = 0;
         loop {
             match self.state {
-                EncoderState::Start => {
-                    // Encode the headers to a buffer, the first time we poll
-                    let head = self.encode_head()?;
-                    self.state = EncoderState::Head {
-                        data: head,
-                        head_bytes_read: 0,
-                    };
-                }
-                EncoderState::Head {
-                    ref data,
-                    mut head_bytes_read,
-                } => {
-                    // Read from the serialized headers, url and methods.
-                    let head_len = data.len();
-                    let len = std::cmp::min(head_len - head_bytes_read, buf.len());
-                    let range = head_bytes_read..head_bytes_read + len;
-                    buf[0..len].copy_from_slice(&data[range]);
-                    self.bytes_read += len;
-                    head_bytes_read += len;
-
-                    // If we've read the total length of the head we're done
-                    // reading the head and can transition to reading the body
-                    if head_bytes_read == head_len {
-                        // The response length lets us know if we are encoding
-                        // our body in chunks or not
-                        self.state = match self.res.len() {
-                            Some(body_len) => EncoderState::Body {
-                                body_bytes_read: 0,
-                                body_len,
-                            },
-                            None => EncoderState::UncomputedChunked,
-                        };
-                    } else {
-                        // If we haven't read the entire header it means `buf` isn't
-                        // big enough. Break out of loop and return from `poll_read`
+                EncoderState::Start => self.encode_start()?,
+                EncoderState::Head { .. } => {
+                    if !self.encode_head(buf) {
                         break;
                     }
                 }
