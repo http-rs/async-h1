@@ -115,15 +115,13 @@ impl<R: Read + Unpin> ChunkedDecoder<R> {
                     pending: false,
                 })
             }
-            Poll::Pending => {
-                return Ok(DecodeResult::Some {
-                    read: 0,
-                    new_state: Some(State::Chunk(new_current, len)),
-                    new_pos,
-                    buffer,
-                    pending: true,
-                });
-            }
+            Poll::Pending => Ok(DecodeResult::Some {
+                read: 0,
+                new_state: Some(State::Chunk(new_current, len)),
+                new_pos,
+                buffer,
+                pending: true,
+            }),
         }
     }
 

@@ -51,7 +51,7 @@ pub(crate) fn fmt_http_date(d: SystemTime) -> String {
 }
 
 impl HttpDate {
-    fn is_valid(&self) -> bool {
+    fn is_valid(self) -> bool {
         self.second < 60
             && self.minute < 60
             && self.hour < 24
@@ -160,8 +160,8 @@ fn parse_rfc850_date(s: &[u8]) -> http_types::Result<HttpDate> {
             b"-Dec-" => 12,
             _ => bail!("Invalid month"),
         },
-        year: year,
-        week_day: week_day,
+        year,
+        week_day,
     })
 }
 
@@ -407,7 +407,7 @@ impl PartialOrd for HttpDate {
 }
 
 fn is_leap_year(year: u16) -> bool {
-    year % 4 == 0 && (!(year % 100 == 0) || year % 400 == 0)
+    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
 
 #[cfg(test)]

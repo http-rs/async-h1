@@ -39,18 +39,21 @@ impl TestCase {
     ) -> TestCase {
         let request_fixture = File::open(fixture_path(&request_file_path))
             .await
-            .expect(&format!(
-                "Could not open request fixture file: {:?}",
-                &fixture_path(request_file_path)
-            ));
+            .unwrap_or_else(|_| {
+                panic!(
+                    "Could not open request fixture file: {:?}",
+                    &fixture_path(request_file_path)
+                )
+            });
 
-        let response_fixture =
-            File::open(fixture_path(&response_file_path))
-                .await
-                .expect(&format!(
+        let response_fixture = File::open(fixture_path(&response_file_path))
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
                     "Could not open response fixture file: {:?}",
                     &fixture_path(response_file_path)
-                ));
+                )
+            });
 
         let temp = tempfile::tempfile().expect("Failed to create tempfile");
         let result = Arc::new(Mutex::new(temp.into()));
@@ -107,18 +110,15 @@ pub(crate) fn fixture_path(relative_path: &str) -> PathBuf {
 }
 
 pub(crate) fn munge_date(expected: &mut String, actual: &mut String) {
-    match expected.find("{DATE}") {
-        Some(i) => {
-            println!("{}", expected);
-            match actual.find("date: ") {
-                Some(j) => {
-                    let eol = actual[j + 6..].find("\r\n").expect("missing eol");
-                    expected.replace_range(i..i + 6, &actual[j + 6..j + 6 + eol]);
-                }
-                None => expected.replace_range(i..i + 6, ""),
+    if let Some(i) = expected.find("{DATE}") {
+        println!("{}", expected);
+        match actual.find("date: ") {
+            Some(j) => {
+                let eol = actual[j + 6..].find("\r\n").expect("missing eol");
+                expected.replace_range(i..i + 6, &actual[j + 6..j + 6 + eol]);
             }
+            None => expected.replace_range(i..i + 6, ""),
         }
-        None => {}
     }
 }
 

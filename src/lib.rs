@@ -95,6 +95,10 @@
 #![deny(missing_debug_implementations, nonstandard_style)]
 #![warn(missing_docs, missing_doc_code_examples, unreachable_pub)]
 #![cfg_attr(test, deny(warnings))]
+#![allow(clippy::if_same_then_else)]
+#![allow(clippy::len_zero)]
+#![allow(clippy::match_bool)]
+#![allow(clippy::unreadable_literal)]
 
 /// The maximum amount of headers parsed on the server.
 const MAX_HEADERS: usize = 128;
