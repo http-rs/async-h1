@@ -70,7 +70,7 @@ impl Encoder {
 
 impl Encoder {
     // Encode the headers to a buffer, the first time we poll.
-    fn encode_start(&mut self) -> io::Result<()> {
+    fn encode_start(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
         self.state = EncoderState::Head;
 
         let reason = self.res.status().canonical_reason();
@@ -104,11 +104,11 @@ impl Encoder {
         }
 
         std::io::Write::write_fmt(&mut self.head, format_args!("\r\n"))?;
-        Ok(())
+        self.encode_head(cx, buf)
     }
 
     /// Encode the status code + headers.
-    fn encode_head(&mut self, buf: &mut [u8]) -> bool {
+    fn encode_head(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
         // Read from the serialized headers, url and methods.
         let head_len = self.head.len();
         let len = std::cmp::min(head_len - self.head_bytes_read, buf.len());
@@ -122,18 +122,21 @@ impl Encoder {
         if self.head_bytes_read == head_len {
             // The response length lets us know if we are encoding
             // our body in chunks or not
-            self.state = match self.res.len() {
+            match self.res.len() {
                 Some(body_len) => {
                     self.body_len = body_len;
-                    EncoderState::Body
+                    self.state = EncoderState::Body;
+                    return self.encode_body(cx, buf);
                 }
-                None => EncoderState::UncomputedChunked,
+                None => {
+                    self.state = EncoderState::UncomputedChunked;
+                    return self.encode_uncomputed_chunked(cx, buf);
+                }
             };
-            true
         } else {
             // If we haven't read the entire header it means `buf` isn't
             // big enough. Break out of loop and return from `poll_read`
-            false
+            return Poll::Ready(Ok(self.bytes_read));
         }
     }
 
@@ -190,6 +193,7 @@ impl Encoder {
         }
     }
 
+    /// Compute a "chunk", which is the value from the stream between CRLFs.
     fn encode_uncomputed_chunked(
         &mut self,
         cx: &mut Context<'_>,
@@ -286,6 +290,7 @@ impl Encoder {
         }
     }
 
+    /// We already have a chunk stored in memory; write it back out.
     fn encode_computed_chunked(
         &mut self,
         cx: &mut Context<'_>,
@@ -323,19 +328,13 @@ impl Read for Encoder {
         // we keep track how many bytes of the head and body we've read
         // in this call of `poll_read`
         self.bytes_read = 0;
-        loop {
-            match self.state {
-                EncoderState::Start => self.encode_start()?,
-                EncoderState::Head => {
-                    if !self.encode_head(buf) {
-                        return Poll::Ready(Ok(self.bytes_read));
-                    }
-                }
-                EncoderState::Body => return self.encode_body(cx, buf),
-                EncoderState::UncomputedChunked => return self.encode_uncomputed_chunked(cx, buf),
-                EncoderState::ComputedChunked => return self.encode_computed_chunked(cx, buf),
-                EncoderState::Done => return Poll::Ready(Ok(self.bytes_read)),
-            }
+        match self.state {
+            EncoderState::Start => self.encode_start(cx, buf),
+            EncoderState::Head => self.encode_head(cx, buf),
+            EncoderState::Body => self.encode_body(cx, buf),
+            EncoderState::UncomputedChunked => self.encode_uncomputed_chunked(cx, buf),
+            EncoderState::ComputedChunked => self.encode_computed_chunked(cx, buf),
+            EncoderState::Done => Poll::Ready(Ok(self.bytes_read)),
         }
     }
 }
