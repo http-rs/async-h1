@@ -21,6 +21,8 @@ pub(crate) struct Encoder {
     res: Response,
     /// The state of the encoding process
     state: EncoderState,
+    /// Track bytes read in a call to poll_read.
+    bytes_read: usize,
 }
 
 #[derive(Debug)]
@@ -48,6 +50,7 @@ impl Encoder {
         Self {
             res,
             state: EncoderState::Start,
+            bytes_read: 0,
         }
     }
 
@@ -92,7 +95,7 @@ impl Read for Encoder {
     ) -> Poll<io::Result<usize>> {
         // we must keep track how many bytes of the head and body we've read
         // in this call of `poll_read`
-        let mut bytes_read = 0;
+        self.bytes_read = 0;
         loop {
             match self.state {
                 EncoderState::Start => {
@@ -112,7 +115,7 @@ impl Read for Encoder {
                     let len = std::cmp::min(head_len - head_bytes_read, buf.len());
                     let range = head_bytes_read..head_bytes_read + len;
                     buf[0..len].copy_from_slice(&data[range]);
-                    bytes_read += len;
+                    self.bytes_read += len;
                     head_bytes_read += len;
 
                     // If we've read the total length of the head we're done
@@ -139,23 +142,23 @@ impl Read for Encoder {
                 } => {
                     // Double check that we didn't somehow read more bytes than
                     // can fit in our buffer
-                    debug_assert!(bytes_read <= buf.len());
+                    debug_assert!(self.bytes_read <= buf.len());
 
                     // ensure we have at least room for 1 more byte in our buffer
-                    if bytes_read == buf.len() {
+                    if self.bytes_read == buf.len() {
                         break;
                     }
 
                     // Figure out how many bytes we can read.
-                    let upper_bound = (bytes_read + body_len - body_bytes_read).min(buf.len());
+                    let upper_bound = (self.bytes_read + body_len - body_bytes_read).min(buf.len());
                     // Read bytes from body
-                    let inner_poll_result =
-                        Pin::new(&mut self.res).poll_read(cx, &mut buf[bytes_read..upper_bound]);
+                    let range = self.bytes_read..upper_bound;
+                    let inner_poll_result = Pin::new(&mut self.res).poll_read(cx, &mut buf[range]);
                     let new_body_bytes_read = match inner_poll_result {
                         Poll::Ready(Ok(n)) => n,
                         Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
                         Poll::Pending => {
-                            if bytes_read == 0 {
+                            if self.bytes_read == 0 {
                                 return Poll::Pending;
                             } else {
                                 break;
@@ -163,7 +166,7 @@ impl Read for Encoder {
                         }
                     };
                     body_bytes_read += new_body_bytes_read;
-                    bytes_read += new_body_bytes_read;
+                    self.bytes_read += new_body_bytes_read;
 
                     // Double check we did not read more body bytes than the total
                     // length of the body
@@ -192,7 +195,7 @@ impl Read for Encoder {
                 EncoderState::UncomputedChunked => {
                     // We can read a maximum of the buffer's total size
                     // minus what we've already filled the buffer with
-                    let buffer_remaining = buf.len() - bytes_read;
+                    let buffer_remaining = buf.len() - self.bytes_read;
 
                     // ensure we have at least room for 1 byte in our buffer
                     if buffer_remaining == 0 {
@@ -208,7 +211,7 @@ impl Read for Encoder {
                         Poll::Ready(Ok(n)) => n,
                         Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
                         Poll::Pending => {
-                            if bytes_read == 0 {
+                            if self.bytes_read == 0 {
                                 return Poll::Pending;
                             } else {
                                 break;
@@ -224,7 +227,7 @@ impl Read for Encoder {
 
                     // calculate the total size of the chunk including serialized
                     // length and the CRLF padding
-                    let total_chunk_size = bytes_read
+                    let total_chunk_size = self.bytes_read
                         + chunk_length_bytes_len
                         + CRLF_LENGTH
                         + chunk_length
@@ -233,24 +236,24 @@ impl Read for Encoder {
                     // See if we can write the chunk out in one go
                     if total_chunk_size < buffer_remaining {
                         // Write the chunk length into the buffer
-                        buf[bytes_read..bytes_read + chunk_length_bytes_len]
+                        buf[self.bytes_read..(self.bytes_read + chunk_length_bytes_len)]
                             .copy_from_slice(chunk_length_bytes);
-                        bytes_read += chunk_length_bytes_len;
+                        self.bytes_read += chunk_length_bytes_len;
 
                         // follow chunk length with CRLF
-                        buf[bytes_read] = CR;
-                        buf[bytes_read + 1] = LF;
-                        bytes_read += 2;
+                        buf[self.bytes_read] = CR;
+                        buf[self.bytes_read + 1] = LF;
+                        self.bytes_read += 2;
 
                         // copy chunk into buf
-                        buf[bytes_read..bytes_read + chunk_length]
+                        buf[self.bytes_read..(self.bytes_read + chunk_length)]
                             .copy_from_slice(&chunk_buf[..chunk_length]);
-                        bytes_read += chunk_length;
+                        self.bytes_read += chunk_length;
 
                         // follow chunk with CRLF
-                        buf[bytes_read] = CR;
-                        buf[bytes_read + 1] = LF;
-                        bytes_read += 2;
+                        buf[self.bytes_read] = CR;
+                        buf[self.bytes_read + 1] = LF;
+                        self.bytes_read += 2;
 
                         if chunk_length == 0 {
                             self.state = EncoderState::Done;
@@ -276,7 +279,7 @@ impl Read for Encoder {
                         // follow chunk with CRLF
                         chunk[bytes_written] = CR;
                         chunk[bytes_written + 1] = LF;
-                        bytes_read += 2;
+                        self.bytes_read += 2;
                         self.state = EncoderState::ComputedChunked {
                             chunk: io::Cursor::new(chunk),
                             is_last: chunk_length == 0,
@@ -288,18 +291,18 @@ impl Read for Encoder {
                     is_last,
                 } => {
                     let inner_poll_result = Pin::new(chunk).poll_read(cx, &mut buf);
-                    bytes_read += match inner_poll_result {
+                    self.bytes_read += match inner_poll_result {
                         Poll::Ready(Ok(n)) => n,
                         Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
                         Poll::Pending => {
-                            if bytes_read == 0 {
+                            if self.bytes_read == 0 {
                                 return Poll::Pending;
                             } else {
                                 break;
                             }
                         }
                     };
-                    if bytes_read == 0 {
+                    if self.bytes_read == 0 {
                         self.state = match is_last {
                             true => EncoderState::Done,
                             false => EncoderState::UncomputedChunked,
@@ -311,6 +314,6 @@ impl Read for Encoder {
             }
         }
 
-        Poll::Ready(Ok(bytes_read as usize))
+        Poll::Ready(Ok(self.bytes_read as usize))
     }
 }
