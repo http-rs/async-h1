@@ -46,7 +46,7 @@ where
         let req = match timeout(timeout_duration, decode(addr, io.clone())).await {
             Ok(Ok(Some(r))) => r,
             Ok(Ok(None)) | Err(TimeoutError { .. }) => break, /* EOF or timeout */
-            Ok(Err(e)) => return Err(e).into(),
+            Ok(Err(e)) => return Err(e),
         };
 
         // Pass the request to the endpoint and encode the response.
