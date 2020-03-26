@@ -8,69 +8,6 @@ use std::pin::Pin;
 
 use crate::date::fmt_http_date;
 
-/// Encode an HTTP request on the client.
-#[doc(hidden)]
-pub async fn encode(req: Request) -> http_types::Result<Encoder> {
-    let mut buf: Vec<u8> = vec![];
-
-    let mut url = req.url().path().to_owned();
-    if let Some(fragment) = req.url().fragment() {
-        url.push('#');
-        url.push_str(fragment);
-    }
-    if let Some(query) = req.url().query() {
-        url.push('?');
-        url.push_str(query);
-    }
-
-    let val = format!("{} {} HTTP/1.1\r\n", req.method(), url);
-    log::trace!("> {}", &val);
-    buf.write_all(val.as_bytes()).await?;
-
-    // Insert Host header
-    // Insert host
-    let host = req.url().host_str();
-    let host = host.ok_or_else(|| format_err!("Missing hostname"))?;
-    let val = if let Some(port) = req.url().port() {
-        format!("host: {}:{}\r\n", host, port)
-    } else {
-        format!("host: {}\r\n", host)
-    };
-
-    log::trace!("> {}", &val);
-    buf.write_all(val.as_bytes()).await?;
-
-    // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
-    // send all items in chunks.
-    if let Some(len) = req.len() {
-        let val = format!("content-length: {}\r\n", len);
-        log::trace!("> {}", &val);
-        buf.write_all(val.as_bytes()).await?;
-    } else {
-        // write!(&mut buf, "Transfer-Encoding: chunked\r\n")?;
-        panic!("chunked encoding is not implemented yet");
-        // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Transfer-Encoding
-        //      https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Trailer
-    }
-
-    let date = fmt_http_date(std::time::SystemTime::now());
-    buf.write_all(b"date: ").await?;
-    buf.write_all(date.as_bytes()).await?;
-    buf.write_all(b"\r\n").await?;
-
-    for (header, values) in req.iter() {
-        for value in values.iter() {
-            let val = format!("{}: {}\r\n", header, value);
-            log::trace!("> {}", &val);
-            buf.write_all(val.as_bytes()).await?;
-        }
-    }
-
-    buf.write_all(b"\r\n").await?;
-
-    Ok(Encoder::new(buf, req))
-}
-
 /// An HTTP encoder.
 #[doc(hidden)]
 #[derive(Debug)]
@@ -90,16 +27,73 @@ pub struct Encoder {
 }
 
 impl Encoder {
-    /// Create a new instance.
-    pub(crate) fn new(headers: Vec<u8>, request: Request) -> Self {
-        Self {
-            request,
-            headers,
+    /// Encode an HTTP request on the client.
+    pub async fn encode(req: Request) -> http_types::Result<Self> {
+        let mut buf: Vec<u8> = vec![];
+
+        let mut url = req.url().path().to_owned();
+        if let Some(fragment) = req.url().fragment() {
+            url.push('#');
+            url.push_str(fragment);
+        }
+        if let Some(query) = req.url().query() {
+            url.push('?');
+            url.push_str(query);
+        }
+
+        let val = format!("{} {} HTTP/1.1\r\n", req.method(), url);
+        log::trace!("> {}", &val);
+        buf.write_all(val.as_bytes()).await?;
+
+        // Insert Host header
+        // Insert host
+        let host = req.url().host_str();
+        let host = host.ok_or_else(|| format_err!("Missing hostname"))?;
+        let val = if let Some(port) = req.url().port() {
+            format!("host: {}:{}\r\n", host, port)
+        } else {
+            format!("host: {}\r\n", host)
+        };
+
+        log::trace!("> {}", &val);
+        buf.write_all(val.as_bytes()).await?;
+
+        // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
+        // send all items in chunks.
+        if let Some(len) = req.len() {
+            let val = format!("content-length: {}\r\n", len);
+            log::trace!("> {}", &val);
+            buf.write_all(val.as_bytes()).await?;
+        } else {
+            // write!(&mut buf, "Transfer-Encoding: chunked\r\n")?;
+            panic!("chunked encoding is not implemented yet");
+            // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Transfer-Encoding
+            //      https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Trailer
+        }
+
+        let date = fmt_http_date(std::time::SystemTime::now());
+        buf.write_all(b"date: ").await?;
+        buf.write_all(date.as_bytes()).await?;
+        buf.write_all(b"\r\n").await?;
+
+        for (header, values) in req.iter() {
+            for value in values.iter() {
+                let val = format!("{}: {}\r\n", header, value);
+                log::trace!("> {}", &val);
+                buf.write_all(val.as_bytes()).await?;
+            }
+        }
+
+        buf.write_all(b"\r\n").await?;
+
+        Ok(Self {
+            request: req,
+            headers: buf,
             cursor: 0,
             headers_done: false,
             body_done: false,
             body_bytes_read: 0,
-        }
+        })
     }
 }
 

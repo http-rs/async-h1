@@ -7,14 +7,14 @@ mod decode;
 mod encode;
 
 pub use decode::decode;
-pub use encode::encode;
+pub use encode::Encoder;
 
 /// Opens an HTTP/1.1 connection to a remote host.
 pub async fn connect<RW>(mut stream: RW, req: Request) -> http_types::Result<Response>
 where
     RW: Read + Write + Send + Sync + Unpin + 'static,
 {
-    let mut req = encode(req).await?;
+    let mut req = Encoder::encode(req).await?;
     log::trace!("> {:?}", &req);
 
     io::copy(&mut req, &mut stream).await?;
