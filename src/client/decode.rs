@@ -13,6 +13,9 @@ use crate::chunked::ChunkedDecoder;
 use crate::date::fmt_http_date;
 use crate::{MAX_HEADERS, MAX_HEAD_LENGTH};
 
+const CR: u8 = b'\r';
+const LF: u8 = b'\n';
+
 /// Decode an HTTP response on the client.
 #[doc(hidden)]
 pub async fn decode<R>(reader: R) -> http_types::Result<Response>
@@ -26,7 +29,7 @@ where
 
     // Keep reading bytes from the stream until we hit the end of the stream.
     loop {
-        let bytes_read = reader.read_until(b'\n', &mut buf).await?;
+        let bytes_read = reader.read_until(LF, &mut buf).await?;
         // No more bytes are yielded from the stream.
         assert!(bytes_read != 0, "Empty response"); // TODO: ensure?
 
@@ -38,7 +41,7 @@ where
 
         // We've hit the end delimiter of the stream.
         let idx = buf.len() - 1;
-        if idx >= 3 && &buf[idx - 3..=idx] == b"\r\n\r\n" {
+        if idx >= 3 && &buf[idx - 3..=idx] == [CR, LF, CR, LF] {
             break;
         }
     }
@@ -75,19 +78,14 @@ where
         "Unexpected Content-Length header"
     );
 
-    // Check for Transfer-Encoding
-    match transfer_encoding {
-        Some(encoding) if !encoding.is_empty() => {
-            if encoding.last().unwrap().as_str() == "chunked" {
-                let trailers_sender = res.send_trailers();
-                let reader = BufReader::new(ChunkedDecoder::new(reader, trailers_sender));
-                res.set_body(Body::from_reader(reader, None));
-                return Ok(res);
-            }
-            // Fall through to Content-Length
-        }
-        _ => {
-            // Fall through to Content-Length
+    if let Some(encoding) = transfer_encoding {
+        if !encoding.is_empty() && encoding.last().unwrap().as_str() == "chunked" {
+            let trailers_sender = res.send_trailers();
+            let reader = BufReader::new(ChunkedDecoder::new(reader, trailers_sender));
+            res.set_body(Body::from_reader(reader, None));
+
+            // Return the response.
+            return Ok(res);
         }
     }
 

@@ -334,7 +334,7 @@ impl Read for Encoder {
             EncoderState::Body => self.encode_body(cx, buf),
             EncoderState::UncomputedChunked => self.encode_uncomputed_chunked(cx, buf),
             EncoderState::ComputedChunked => self.encode_computed_chunked(cx, buf),
-            EncoderState::Done => Poll::Ready(Ok(self.bytes_read)),
+            EncoderState::Done => Poll::Ready(Ok(0)),
         }
     }
 }
