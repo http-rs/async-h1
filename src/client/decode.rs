@@ -92,12 +92,9 @@ where
     }
 
     // Check for Content-Length.
-    match content_length {
-        Some(len) => {
-            let len = len.last().unwrap().as_str().parse::<usize>()?;
-            res.set_body(Body::from_reader(reader.take(len as u64), Some(len)));
-        }
-        None => {}
+    if let Some(len) = content_length {
+        let len = len.last().unwrap().as_str().parse::<usize>()?;
+        res.set_body(Body::from_reader(reader.take(len as u64), Some(len)));
     }
 
     // Return the response.

@@ -115,7 +115,7 @@ impl Read for Encoder {
         if !self.headers_done {
             let len = std::cmp::min(self.headers.len() - self.cursor, buf.len());
             let range = self.cursor..self.cursor + len;
-            buf[0..len].copy_from_slice(&mut self.headers[range]);
+            buf[0..len].copy_from_slice(&self.headers[range]);
             self.cursor += len;
             if self.cursor == self.headers.len() {
                 self.headers_done = true;
