@@ -71,6 +71,7 @@ impl Encoder {
 impl Encoder {
     // Encode the headers to a buffer, the first time we poll.
     fn encode_start(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+        log::trace!("Server response encoding: start");
         self.state = EncoderState::Head;
 
         let reason = self.res.status().canonical_reason();
@@ -126,10 +127,12 @@ impl Encoder {
                 Some(body_len) => {
                     self.body_len = body_len;
                     self.state = EncoderState::Body;
+                    log::trace!("Server response encoding: exact size body");
                     return self.encode_body(cx, buf);
                 }
                 None => {
                     self.state = EncoderState::UncomputedChunked;
+                    log::trace!("Server response encoding: chunked body");
                     return self.encode_uncomputed_chunked(cx, buf);
                 }
             };
