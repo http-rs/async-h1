@@ -80,7 +80,10 @@ impl TestCase {
 
     #[allow(dead_code)]
     pub fn throttle(&mut self) {
-        self.throttle = Arc::new(Throttle::YieldPending(AtomicBool::new(false), AtomicBool::new(false)));
+        self.throttle = Arc::new(Throttle::YieldPending(
+            AtomicBool::new(false),
+            AtomicBool::new(false),
+        ));
     }
 
     pub async fn read_result(&self) -> String {
@@ -141,9 +144,7 @@ impl Read for TestCase {
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         match &*self.throttle {
-            Throttle::NoThrottle => {
-                Pin::new(&mut &*self.source_fixture).poll_read(cx, buf)
-            },
+            Throttle::NoThrottle => Pin::new(&mut &*self.source_fixture).poll_read(cx, buf),
             Throttle::YieldPending(read_flag, _) => {
                 if read_flag.fetch_xor(true, std::sync::atomic::Ordering::SeqCst) {
                     cx.waker().wake_by_ref();
@@ -155,7 +156,7 @@ impl Read for TestCase {
                     let ret = Pin::new(&mut &*self.source_fixture).poll_read(cx, buf);
                     ret
                 }
-            },
+            }
         }
     }
 }
@@ -165,7 +166,7 @@ impl Write for TestCase {
         match &*self.throttle {
             Throttle::NoThrottle => {
                 Pin::new(&mut &*self.result.lock().unwrap()).poll_write(cx, buf)
-            },
+            }
             Throttle::YieldPending(_, write_flag) => {
                 if write_flag.fetch_xor(true, std::sync::atomic::Ordering::SeqCst) {
                     cx.waker().wake_by_ref();
@@ -176,7 +177,7 @@ impl Write for TestCase {
                     let buf = &buf[..throttle_len];
                     Pin::new(&mut &*self.result.lock().unwrap()).poll_write(cx, buf)
                 }
-            },
+            }
         }
     }
 
