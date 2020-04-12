@@ -1,7 +1,9 @@
+use async_std::fs::File;
+use async_std::io::BufReader;
 use async_std::net::{TcpListener, TcpStream};
 use async_std::prelude::*;
 use async_std::task;
-use http_types::{Response, StatusCode};
+use http_types::{Body, Response, StatusCode};
 
 #[async_std::main]
 async fn main() -> http_types::Result<()> {
@@ -30,7 +32,8 @@ async fn accept(addr: String, stream: TcpStream) -> http_types::Result<()> {
     async_h1::accept(&addr, stream.clone(), |_req| async move {
         let mut res = Response::new(StatusCode::Ok);
         res.insert_header("Content-Type", "text/plain")?;
-        res.set_body("Hello");
+        let body = Body::from_reader(BufReader::new(File::open("src/date.rs").await?), None);
+        res.set_body(body);
         Ok(res)
     })
     .await?;
