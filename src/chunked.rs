@@ -72,7 +72,11 @@ impl<R: Read + Unpin> ChunkedDecoder<R> {
             let to_read_buf = std::cmp::min(to_read, pos.len());
             buf[..to_read_buf].copy_from_slice(&buffer[new_pos.start..new_pos.start + to_read_buf]);
 
-            new_pos.start += to_read_buf;
+            if new_pos.start + to_read_buf == new_pos.end {
+                new_pos = 0..0
+            } else {
+                new_pos.start += to_read_buf;
+            }
             new_current += to_read_buf as u64;
             read += to_read_buf;
 
@@ -534,6 +538,32 @@ mod tests {
                  \r\n\
                  chunks."
             );
+        });
+    }
+
+    #[test]
+    fn test_chunked_big() {
+        async_std::task::block_on(async move {
+            let mut input: Vec<u8> = "800\r\n".as_bytes().to_vec();
+            input.extend(vec![b'X'; 2048]);
+            input.extend("\r\n1800\r\n".as_bytes());
+            input.extend(vec![b'Y'; 6144]);
+            input.extend("\r\n800\r\n".as_bytes());
+            input.extend(vec![b'Z'; 2048]);
+            input.extend("\r\n0\r\n\r\n".as_bytes());
+
+            let (s, _r) = async_std::sync::channel(1);
+            let sender = TrailersSender::new(s);
+            let mut decoder = ChunkedDecoder::new(async_std::io::Cursor::new(input), sender);
+
+            let mut output = String::new();
+            decoder.read_to_string(&mut output).await.unwrap();
+
+            let mut expected = vec![b'X'; 2048];
+            expected.extend(vec![b'Y'; 6144]);
+            expected.extend(vec![b'Z'; 2048]);
+            assert_eq!(output.len(), 10240);
+            assert_eq!(output.as_bytes(), expected.as_slice());
         });
     }
 
