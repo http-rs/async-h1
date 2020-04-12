@@ -111,7 +111,6 @@ pub(crate) fn fixture_path(relative_path: &str) -> PathBuf {
 
 pub(crate) fn munge_date(expected: &mut String, actual: &mut String) {
     if let Some(i) = expected.find("{DATE}") {
-        println!("{}", expected);
         match actual.find("date: ") {
             Some(j) => {
                 let eol = actual[j + 6..].find("\r\n").expect("missing eol");

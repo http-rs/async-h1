@@ -9,5 +9,4 @@ Mozilla
 Developer
 7
 Network
-0
 

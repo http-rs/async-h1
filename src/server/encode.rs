@@ -126,7 +126,7 @@ impl Encoder {
                 Some(body_len) => {
                     self.body_len = body_len;
                     self.state = EncoderState::FixedBody;
-                    log::trace!("Server response encoding: exact size body");
+                    log::trace!("Server response encoding: fixed length body");
                     return self.encode_fixed_body(cx, buf);
                 }
                 None => {
@@ -165,13 +165,10 @@ impl Encoder {
         let new_body_bytes_read = match inner_poll_result {
             Poll::Ready(Ok(n)) => n,
             Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-            Poll::Pending => {
-                if self.bytes_read == 0 {
-                    return Poll::Pending;
-                } else {
-                    return Poll::Ready(Ok(self.bytes_read));
-                }
-            }
+            Poll::Pending => match self.bytes_read {
+                0 => return Poll::Pending,
+                n => return Poll::Ready(Ok(n)),
+            },
         };
         self.body_bytes_read += new_body_bytes_read;
         self.bytes_read += new_body_bytes_read;
@@ -208,20 +205,25 @@ impl Encoder {
         // returned we're done.
         let src = ready!(Pin::new(&mut self.res).poll_fill_buf(cx))?;
         if src.len() == 0 {
-            self.state = EncoderState::Done;
-            return Poll::Ready(Ok(0));
-        }
+            // Finalize the chunk with a final CRLF.
+            let idx = self.bytes_read;
+            buf[idx] = CR;
+            buf[idx + 1] = LF;
+            self.bytes_read += 2;
 
-        // Save how many bytes have been written to the buffer so far. We'll
-        // need this at the end.
-        let bytes_read_start = self.bytes_read;
+            log::trace!("done sending bytes");
+            self.state = EncoderState::Done;
+            return Poll::Ready(Ok(self.bytes_read));
+        }
 
         // Each chunk is prefixed with the length, then a CRLF, then the
         // content, then another CRLF. Ensure we leave enough space in the
         // buffer to read all that.
-        let mut amt = src.len().min(buf.len() - self.bytes_read);
+        let buf_len = buf.len().checked_sub(self.bytes_read).unwrap_or(0);
+        let amt = src.len().min(buf_len);
         let len_prefix = format!("{:X}", amt).into_bytes();
-        amt = amt.checked_sub(len_prefix.len() + 4).unwrap_or(0);
+        let buf_upper = buf_len.checked_sub(len_prefix.len() + 4).unwrap_or(0);
+        let amt = amt.min(buf_upper);
 
         // Write our frame header to the buffer.
         let lower = self.bytes_read;
@@ -229,12 +231,12 @@ impl Encoder {
         buf[lower..upper].copy_from_slice(&len_prefix);
         buf[upper] = CR;
         buf[upper + 1] = LF;
-        self.bytes_read += upper + 2;
+        self.bytes_read += len_prefix.len() + 2;
 
         // Copy the bytes from our source into the output buffer.
         let lower = self.bytes_read;
         let upper = self.bytes_read + amt;
-        buf[lower..upper].copy_from_slice(src);
+        buf[lower..upper].copy_from_slice(&src[0..amt]);
         Pin::new(&mut self.res).consume(amt);
         self.bytes_read += amt;
 
@@ -245,8 +247,8 @@ impl Encoder {
         self.bytes_read += 2;
 
         // Finally return how many bytes we've written to the buffer.
-        let bytes_read = self.bytes_read - bytes_read_start;
-        Poll::Ready(Ok(bytes_read))
+        log::trace!("sending {} bytes", self.bytes_read);
+        Poll::Ready(Ok(self.bytes_read))
     }
 }
 
