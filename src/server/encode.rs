@@ -207,9 +207,12 @@ impl Encoder {
         if src.len() == 0 {
             // Finalize the chunk with a final CRLF.
             let idx = self.bytes_read;
-            buf[idx] = CR;
-            buf[idx + 1] = LF;
-            self.bytes_read += 2;
+            buf[idx] = b'0';
+            buf[idx + 1] = CR;
+            buf[idx + 2] = LF;
+            buf[idx + 3] = CR;
+            buf[idx + 4] = LF;
+            self.bytes_read += 5;
 
             log::trace!("done sending bytes");
             self.state = EncoderState::Done;
@@ -221,7 +224,7 @@ impl Encoder {
         // buffer to read all that.
         let buf_len = buf.len().checked_sub(self.bytes_read).unwrap_or(0);
         let amt = src.len().min(buf_len);
-        let len_prefix = format!("{:X}", amt).into_bytes();
+        let len_prefix = format!("{}", amt).into_bytes();
         let buf_upper = buf_len.checked_sub(len_prefix.len() + 4).unwrap_or(0);
         let amt = amt.min(buf_upper);
 
