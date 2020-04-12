@@ -100,7 +100,7 @@ impl TestCase {
 
         // munge actual and expected so that we don't rely on dates matching exactly
         munge_date(&mut expected, &mut actual);
-        pretty_assertions::assert_eq!(actual, expected);
+        pretty_assertions::assert_eq!(expected, actual);
     }
 }
 
