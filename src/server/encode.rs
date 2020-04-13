@@ -196,6 +196,25 @@ impl Encoder {
         }
     }
 
+    /// Encode an AsyncBufRead using "chunked" framing. This is used for streams
+    /// whose length is not known up front.
+    ///
+    /// # Format
+    ///
+    /// Each "chunk" uses the following encoding:
+    ///
+    /// ```txt
+    /// 1. {byte length of `data` as hex}\r\n
+    /// 2. {data}\r\n
+    /// ```
+    ///
+    /// A chunk stream is finalized by appending the following:
+    ///
+    /// ```txt
+    /// 1. 0\r\n
+    /// 2. {trailing header}\r\n (can be repeated)
+    /// 3. \r\n
+    /// ```
     fn encode_chunked_body(
         &mut self,
         cx: &mut Context<'_>,
@@ -230,13 +249,15 @@ impl Encoder {
             return Poll::Ready(Ok(self.bytes_read));
         }
 
-        // Each chunk is prefixed with the length, then a CRLF, then the
-        // content, then another CRLF. Ensure we leave enough space in the
-        // buffer to read all that.
+        // Each chunk is prefixed with the length of the data in hex, then a
+        // CRLF, then the content, then another CRLF. Calculate how many bytes
+        // each part should be.
         let buf_len = buf.len().checked_sub(self.bytes_read).unwrap_or(0);
         let amt = src.len().min(buf_len);
-        let len_prefix = format!("{:X}", amt).into_bytes();
-        let buf_upper = buf_len.checked_sub(len_prefix.len() + 4).unwrap_or(0);
+        // Calculate the max char count encoding the `len_prefix` statement
+        // as hex would take. This is done by rounding up `log16(amt)`.
+        let hex_len = (amt as f64).log(16.0).ceil() as usize;
+        let buf_upper = buf_len.checked_sub(hex_len + 4).unwrap_or(0);
         let amt = amt.min(buf_upper);
         let len_prefix = format!("{:X}", amt).into_bytes();
 
