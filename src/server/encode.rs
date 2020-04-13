@@ -4,7 +4,7 @@ use std::pin::Pin;
 
 use async_std::io;
 use async_std::io::prelude::*;
-use async_std::task::{ready, Context, Poll};
+use async_std::task::{Context, Poll};
 use http_types::Response;
 
 use crate::date::fmt_http_date;
@@ -201,15 +201,26 @@ impl Encoder {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        // Get bytes from the underlying stream. If a zero-length buffer is
-        // returned we're done.
-        let src = ready!(Pin::new(&mut self.res).poll_fill_buf(cx))?;
+        // Get bytes from the underlying stream. If the stream is not ready yet,
+        // return the header bytes if we have any.
+        let src = match Pin::new(&mut self.res).poll_fill_buf(cx) {
+            Poll::Ready(Ok(n)) => n,
+            Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+            Poll::Pending => match self.bytes_read {
+                0 => return Poll::Pending,
+                n => return Poll::Ready(Ok(n)),
+            },
+        };
+
+        // If the stream doesn't have any more bytes left to read we're done.
         if src.len() == 0 {
-            // Finalize the chunk with a final CRLF.
+            // Write out the final empty chunk
             let idx = self.bytes_read;
             buf[idx] = b'0';
             buf[idx + 1] = CR;
             buf[idx + 2] = LF;
+
+            // Write the final CRLF
             buf[idx + 3] = CR;
             buf[idx + 4] = LF;
             self.bytes_read += 5;
@@ -224,9 +235,10 @@ impl Encoder {
         // buffer to read all that.
         let buf_len = buf.len().checked_sub(self.bytes_read).unwrap_or(0);
         let amt = src.len().min(buf_len);
-        let len_prefix = format!("{}", amt).into_bytes();
+        let len_prefix = format!("{:X}", amt).into_bytes();
         let buf_upper = buf_len.checked_sub(len_prefix.len() + 4).unwrap_or(0);
         let amt = amt.min(buf_upper);
+        let len_prefix = format!("{:X}", amt).into_bytes();
 
         // Write our frame header to the buffer.
         let lower = self.bytes_read;

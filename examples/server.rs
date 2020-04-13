@@ -32,7 +32,10 @@ async fn accept(addr: String, stream: TcpStream) -> http_types::Result<()> {
     async_h1::accept(&addr, stream.clone(), |_req| async move {
         let mut res = Response::new(StatusCode::Ok);
         res.insert_header("Content-Type", "text/plain")?;
-        let body = Body::from_reader(BufReader::new(File::open("src/date.rs").await?), None);
+        let body = Body::from_reader(
+            BufReader::new(File::open("tests/fixtures/zeros.txt").await?),
+            None,
+        );
         res.set_body(body);
         Ok(res)
     })
