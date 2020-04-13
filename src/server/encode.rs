@@ -4,13 +4,11 @@ use std::pin::Pin;
 
 use async_std::io;
 use async_std::io::prelude::*;
-use async_std::task::{Context, Poll};
+use async_std::task::{ready, Context, Poll};
 use http_types::Response;
 
+use crate::chunked::ChunkedEncoder;
 use crate::date::fmt_http_date;
-
-const CR: u8 = b'\r';
-const LF: u8 = b'\n';
 
 /// A streaming HTTP encoder.
 ///
@@ -33,6 +31,8 @@ pub(crate) struct Encoder {
     /// The amount of bytes read from the body.
     /// This is only used in the known-length body encoder.
     body_bytes_read: usize,
+    /// An encoder for chunked encoding.
+    chunked: ChunkedEncoder,
 }
 
 #[derive(Debug)]
@@ -55,6 +55,7 @@ impl Encoder {
             head_bytes_read: 0,
             body_len: 0,
             body_bytes_read: 0,
+            chunked: ChunkedEncoder::new(),
         }
     }
 }
@@ -190,93 +191,19 @@ impl Encoder {
 
     /// Encode an AsyncBufRead using "chunked" framing. This is used for streams
     /// whose length is not known up front.
-    ///
-    /// # Format
-    ///
-    /// Each "chunk" uses the following encoding:
-    ///
-    /// ```txt
-    /// 1. {byte length of `data` as hex}\r\n
-    /// 2. {data}\r\n
-    /// ```
-    ///
-    /// A chunk stream is finalized by appending the following:
-    ///
-    /// ```txt
-    /// 1. 0\r\n
-    /// 2. {trailing header}\r\n (can be repeated)
-    /// 3. \r\n
-    /// ```
     fn encode_chunked_body(
         &mut self,
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        // Get bytes from the underlying stream. If the stream is not ready yet,
-        // return the header bytes if we have any.
-        let src = match Pin::new(&mut self.res).poll_fill_buf(cx) {
-            Poll::Ready(Ok(n)) => n,
-            Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-            Poll::Pending => match self.bytes_read {
-                0 => return Poll::Pending,
-                n => return Poll::Ready(Ok(n)),
-            },
-        };
+        let buf = &mut buf[self.bytes_read..];
+        let read = ready!(self.chunked.encode(&mut self.res, cx, buf))?;
 
-        // If the stream doesn't have any more bytes left to read we're done.
-        if src.len() == 0 {
-            // Write out the final empty chunk
-            let idx = self.bytes_read;
-            buf[idx] = b'0';
-            buf[idx + 1] = CR;
-            buf[idx + 2] = LF;
-
-            // Write the final CRLF
-            buf[idx + 3] = CR;
-            buf[idx + 4] = LF;
-            self.bytes_read += 5;
-
-            log::trace!("done sending bytes");
-            self.state = EncoderState::Done;
-            return Poll::Ready(Ok(self.bytes_read));
+        self.bytes_read += read;
+        if self.bytes_read == 0 {
+            self.state = EncoderState::Done
         }
 
-        // Each chunk is prefixed with the length of the data in hex, then a
-        // CRLF, then the content, then another CRLF. Calculate how many bytes
-        // each part should be.
-        let buf_len = buf.len().checked_sub(self.bytes_read).unwrap_or(0);
-        let amt = src.len().min(buf_len);
-        // Calculate the max char count encoding the `len_prefix` statement
-        // as hex would take. This is done by rounding up `log16(amt + 1)`.
-        let hex_len = ((amt + 1) as f64).log(16.0).ceil() as usize;
-        let crlf_len = 2 * 2;
-        let buf_upper = buf_len.checked_sub(hex_len + crlf_len).unwrap_or(0);
-        let amt = amt.min(buf_upper);
-        let len_prefix = format!("{:X}", amt).into_bytes();
-
-        // Write our frame header to the buffer.
-        let lower = self.bytes_read;
-        let upper = self.bytes_read + len_prefix.len();
-        buf[lower..upper].copy_from_slice(&len_prefix);
-        buf[upper] = CR;
-        buf[upper + 1] = LF;
-        self.bytes_read += len_prefix.len() + 2;
-
-        // Copy the bytes from our source into the output buffer.
-        let lower = self.bytes_read;
-        let upper = self.bytes_read + amt;
-        buf[lower..upper].copy_from_slice(&src[0..amt]);
-        Pin::new(&mut self.res).consume(amt);
-        self.bytes_read += amt;
-
-        // Finalize the chunk with a final CRLF.
-        let idx = self.bytes_read;
-        buf[idx] = CR;
-        buf[idx + 1] = LF;
-        self.bytes_read += 2;
-
-        // Finally return how many bytes we've written to the buffer.
-        log::trace!("sending {} bytes", self.bytes_read);
         Poll::Ready(Ok(self.bytes_read))
     }
 }
