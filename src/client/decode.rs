@@ -44,6 +44,9 @@ where
         if idx >= 3 && &buf[idx - 3..=idx] == [CR, LF, CR, LF] {
             break;
         }
+        if idx >= 1 && &buf[idx - 1..=idx] == [LF, LF] {
+            break;
+        }
     }
 
     // Convert our header buf into an httparse instance, and validate.
