@@ -8,16 +8,37 @@ use http_types::Response;
 const CR: u8 = b'\r';
 const LF: u8 = b'\n';
 
+/// The encoder state.
+#[derive(Debug)]
+enum State {
+    /// Streaming out chunks.
+    Streaming,
+    /// Receiving trailers from a channel.
+    ReceiveTrailers,
+    /// Streaming out trailers.
+    EncodeTrailers,
+    /// Writing the final CRLF
+    EndOfStream,
+    /// The stream has finished.
+    Done,
+}
+
 /// An encoder for chunked encoding.
 #[derive(Debug)]
 pub(crate) struct ChunkedEncoder {
-    done: bool,
+    /// How many bytes we've written to the buffer so far.
+    bytes_written: usize,
+    /// The internal encoder state.
+    state: State,
 }
 
 impl ChunkedEncoder {
     /// Create a new instance.
     pub(crate) fn new() -> Self {
-        Self { done: false }
+        Self {
+            state: State::Streaming,
+            bytes_written: 0,
+        }
     }
     /// Encode an AsyncBufRead using "chunked" framing. This is used for streams
     /// whose length is not known up front.
@@ -40,23 +61,33 @@ impl ChunkedEncoder {
     /// ```
     pub(crate) fn encode(
         &mut self,
+        res: &mut Response,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        self.bytes_written = 0;
+        match self.state {
+            State::Streaming => self.encode_stream(res, cx, buf),
+            State::ReceiveTrailers => self.encode_trailers(res, cx, buf),
+            State::EncodeTrailers => self.encode_trailers(res, cx, buf),
+            State::EndOfStream => self.encode_eos(cx, buf),
+            State::Done => Poll::Ready(Ok(0)),
+        }
+    }
+
+    /// Stream out data using chunked encoding.
+    fn encode_stream(
+        &mut self,
         mut res: &mut Response,
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        let mut bytes_read = 0;
-
-        // Return early if we know we're done.
-        if self.done {
-            return Poll::Ready(Ok(0));
-        }
-
         // Get bytes from the underlying stream. If the stream is not ready yet,
         // return the header bytes if we have any.
         let src = match Pin::new(&mut res).poll_fill_buf(cx) {
             Poll::Ready(Ok(n)) => n,
             Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-            Poll::Pending => match bytes_read {
+            Poll::Pending => match self.bytes_written {
                 0 => return Poll::Pending,
                 n => return Poll::Ready(Ok(n)),
             },
@@ -65,25 +96,20 @@ impl ChunkedEncoder {
         // If the stream doesn't have any more bytes left to read we're done.
         if src.len() == 0 {
             // Write out the final empty chunk
-            let idx = bytes_read;
+            let idx = self.bytes_written;
             buf[idx] = b'0';
             buf[idx + 1] = CR;
             buf[idx + 2] = LF;
+            self.bytes_written += 3;
 
-            // Write the final CRLF
-            buf[idx + 3] = CR;
-            buf[idx + 4] = LF;
-            bytes_read += 5;
-
-            log::trace!("done sending bytes");
-            self.done = true;
-            return Poll::Ready(Ok(bytes_read));
+            self.state = State::ReceiveTrailers;
+            return self.receive_trailers(res, cx, buf);
         }
 
         // Each chunk is prefixed with the length of the data in hex, then a
         // CRLF, then the content, then another CRLF. Calculate how many bytes
         // each part should be.
-        let buf_len = buf.len().checked_sub(bytes_read).unwrap_or(0);
+        let buf_len = buf.len().checked_sub(self.bytes_written).unwrap_or(0);
         let amt = src.len().min(buf_len);
         // Calculate the max char count encoding the `len_prefix` statement
         // as hex would take. This is done by rounding up `log16(amt + 1)`.
@@ -94,28 +120,66 @@ impl ChunkedEncoder {
         let len_prefix = format!("{:X}", amt).into_bytes();
 
         // Write our frame header to the buffer.
-        let lower = bytes_read;
-        let upper = bytes_read + len_prefix.len();
+        let lower = self.bytes_written;
+        let upper = self.bytes_written + len_prefix.len();
         buf[lower..upper].copy_from_slice(&len_prefix);
         buf[upper] = CR;
         buf[upper + 1] = LF;
-        bytes_read += len_prefix.len() + 2;
+        self.bytes_written += len_prefix.len() + 2;
 
         // Copy the bytes from our source into the output buffer.
-        let lower = bytes_read;
-        let upper = bytes_read + amt;
+        let lower = self.bytes_written;
+        let upper = self.bytes_written + amt;
         buf[lower..upper].copy_from_slice(&src[0..amt]);
         Pin::new(&mut res).consume(amt);
-        bytes_read += amt;
+        self.bytes_written += amt;
 
         // Finalize the chunk with a final CRLF.
-        let idx = bytes_read;
+        let idx = self.bytes_written;
         buf[idx] = CR;
         buf[idx + 1] = LF;
-        bytes_read += 2;
+        self.bytes_written += 2;
 
         // Finally return how many bytes we've written to the buffer.
-        log::trace!("sending {} bytes", bytes_read);
-        Poll::Ready(Ok(bytes_read))
+        log::trace!("sending {} bytes", self.bytes_written);
+        Poll::Ready(Ok(self.bytes_written))
+    }
+
+    /// Receive trailers sent to the response, and store them in an internal
+    /// buffer.
+    fn receive_trailers(
+        &mut self,
+        res: &mut Response,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        // TODO: actually wait for trailers to be received.
+        self.state = State::EncodeTrailers;
+        self.encode_trailers(res, cx, buf)
+    }
+
+    /// Send trailers to the buffer.
+    fn encode_trailers(
+        &mut self,
+        _res: &mut Response,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        // TODO: actually encode trailers here.
+        self.state = State::EndOfStream;
+        self.encode_eos(cx, buf)
+    }
+
+    /// Encode the end of the stream.
+    fn encode_eos(&mut self, _cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+        let idx = self.bytes_written;
+        // Write the final CRLF
+        buf[idx] = CR;
+        buf[idx + 1] = LF;
+        self.bytes_written += 2;
+
+        log::trace!("finished encoding chunked stream");
+        self.state = State::Done;
+        return Poll::Ready(Ok(self.bytes_written));
     }
 }
