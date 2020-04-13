@@ -257,7 +257,8 @@ impl Encoder {
         // Calculate the max char count encoding the `len_prefix` statement
         // as hex would take. This is done by rounding up `log16(amt)`.
         let hex_len = (amt as f64).log(16.0).ceil() as usize;
-        let buf_upper = buf_len.checked_sub(hex_len + 4).unwrap_or(0);
+        let crlf_len = 2 * 2;
+        let buf_upper = buf_len.checked_sub(hex_len + crlf_len).unwrap_or(0);
         let amt = amt.min(buf_upper);
         let len_prefix = format!("{:X}", amt).into_bytes();
 
