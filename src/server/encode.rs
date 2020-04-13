@@ -33,12 +33,6 @@ pub(crate) struct Encoder {
     /// The amount of bytes read from the body.
     /// This is only used in the known-length body encoder.
     body_bytes_read: usize,
-    /// The current chunk being re
-    /// This is only used in the chunked body encoder.
-    chunk: Option<io::Cursor<Vec<u8>>>,
-    /// Determine whether this is the last chunk
-    /// This is only used in the chunked body encoder.
-    is_last: bool,
 }
 
 #[derive(Debug)]
@@ -61,8 +55,6 @@ impl Encoder {
             head_bytes_read: 0,
             body_len: 0,
             body_bytes_read: 0,
-            chunk: None,
-            is_last: false,
         }
     }
 }
