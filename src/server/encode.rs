@@ -255,8 +255,8 @@ impl Encoder {
         let buf_len = buf.len().checked_sub(self.bytes_read).unwrap_or(0);
         let amt = src.len().min(buf_len);
         // Calculate the max char count encoding the `len_prefix` statement
-        // as hex would take. This is done by rounding up `log16(amt)`.
-        let hex_len = (amt as f64).log(16.0).ceil() as usize;
+        // as hex would take. This is done by rounding up `log16(amt + 1)`.
+        let hex_len = ((amt + 1) as f64).log(16.0).ceil() as usize;
         let crlf_len = 2 * 2;
         let buf_upper = buf_len.checked_sub(hex_len + crlf_len).unwrap_or(0);
         let amt = amt.min(buf_upper);
