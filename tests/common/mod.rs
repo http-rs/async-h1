@@ -4,7 +4,7 @@ use async_std::path::PathBuf;
 use async_std::sync::Arc;
 use async_std::task::{Context, Poll};
 use std::pin::Pin;
-use std::sync::Mutex;
+use std::sync::{atomic::AtomicBool, Mutex};
 
 #[derive(Debug, Copy, Clone)]
 #[allow(dead_code)]
@@ -19,6 +19,12 @@ pub struct TestCase {
     source_fixture: Arc<File>,
     expected_fixture: Arc<Mutex<File>>,
     result: Arc<Mutex<File>>,
+    throttle: Arc<Throttle>,
+}
+
+enum Throttle {
+    NoThrottle,
+    YieldPending(AtomicBool, AtomicBool),
 }
 
 impl TestCase {
@@ -68,7 +74,16 @@ impl TestCase {
             source_fixture: Arc::new(source_fixture),
             expected_fixture: Arc::new(Mutex::new(expected_fixture)),
             result,
+            throttle: Arc::new(Throttle::NoThrottle),
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn throttle(&mut self) {
+        self.throttle = Arc::new(Throttle::YieldPending(
+            AtomicBool::new(false),
+            AtomicBool::new(false),
+        ));
     }
 
     pub async fn read_result(&self) -> String {
@@ -128,13 +143,42 @@ impl Read for TestCase {
         cx: &mut Context,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut &*self.source_fixture).poll_read(cx, buf)
+        match &*self.throttle {
+            Throttle::NoThrottle => Pin::new(&mut &*self.source_fixture).poll_read(cx, buf),
+            Throttle::YieldPending(read_flag, _) => {
+                if read_flag.fetch_xor(true, std::sync::atomic::Ordering::SeqCst) {
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                } else {
+                    // read partial
+                    let throttle_len = std::cmp::min(buf.len(), 10);
+                    let buf = &mut buf[..throttle_len];
+                    let ret = Pin::new(&mut &*self.source_fixture).poll_read(cx, buf);
+                    ret
+                }
+            }
+        }
     }
 }
 
 impl Write for TestCase {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<io::Result<usize>> {
-        Pin::new(&mut &*self.result.lock().unwrap()).poll_write(cx, buf)
+        match &*self.throttle {
+            Throttle::NoThrottle => {
+                Pin::new(&mut &*self.result.lock().unwrap()).poll_write(cx, buf)
+            }
+            Throttle::YieldPending(_, write_flag) => {
+                if write_flag.fetch_xor(true, std::sync::atomic::Ordering::SeqCst) {
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                } else {
+                    // write partial
+                    let throttle_len = std::cmp::min(buf.len(), 10);
+                    let buf = &buf[..throttle_len];
+                    Pin::new(&mut &*self.result.lock().unwrap()).poll_write(cx, buf)
+                }
+            }
+        }
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
