@@ -1,12 +1,16 @@
+use std::fmt::{self, Debug};
 use std::pin::Pin;
 
+use async_std::future::Future;
 use async_std::io;
 use async_std::io::prelude::*;
 use async_std::task::{Context, Poll};
-use http_types::Response;
+use http_types::{Response, Trailers};
 
 const CR: u8 = b'\r';
 const LF: u8 = b'\n';
+
+type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a + Send>>;
 
 /// The encoder state.
 #[derive(Debug)]
@@ -24,12 +28,14 @@ enum State {
 }
 
 /// An encoder for chunked encoding.
-#[derive(Debug)]
+// #[derive(Debug)]
 pub(crate) struct ChunkedEncoder {
     /// How many bytes we've written to the buffer so far.
     bytes_written: usize,
     /// The internal encoder state.
     state: State,
+    /// Holds the state of the `Receiver` future.
+    recv_fut: Option<BoxFuture<'static, Option<http_types::Result<Trailers>>>>,
 }
 
 impl ChunkedEncoder {
@@ -38,6 +44,7 @@ impl ChunkedEncoder {
         Self {
             state: State::Streaming,
             bytes_written: 0,
+            recv_fut: None,
         }
     }
     /// Encode an AsyncBufRead using "chunked" framing. This is used for streams
@@ -153,9 +160,31 @@ impl ChunkedEncoder {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        // TODO: actually wait for trailers to be received.
-        self.state = State::EncodeTrailers;
-        self.encode_trailers(res, cx, buf)
+        if self.recv_fut.is_none() {
+            let fut = res.recv_trailers();
+            self.recv_fut = Some(Box::pin(async move { fut.await }));
+        }
+
+        match Pin::new(&mut self.recv_fut.as_mut().unwrap()).poll(cx) {
+            // No trailers were received, finish stream.
+            Poll::Ready(None) => {
+                self.state = State::EndOfStream;
+                self.encode_eos(cx, buf)
+            }
+            // We've received trailers, proceed to encode them.
+            Poll::Ready(Some(trailers)) => {
+                let trailers =
+                    trailers.expect("Trailers should never return errors. See http-types#96");
+
+                self.state = State::EncodeTrailers;
+                self.encode_trailers(res, cx, buf)
+            }
+            // We're waiting on trailers to be received, return.
+            Poll::Pending => match self.bytes_written {
+                0 => Poll::Pending,
+                n => Poll::Ready(Ok(n)),
+            },
+        }
     }
 
     /// Send trailers to the buffer.
@@ -181,5 +210,11 @@ impl ChunkedEncoder {
         log::trace!("finished encoding chunked stream");
         self.state = State::Done;
         return Poll::Ready(Ok(self.bytes_written));
+    }
+}
+
+impl Debug for ChunkedEncoder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        todo!();
     }
 }
