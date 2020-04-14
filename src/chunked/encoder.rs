@@ -7,20 +7,25 @@ use http_types::Response;
 
 const CR: u8 = b'\r';
 const LF: u8 = b'\n';
+const CRLF_LEN: usize = 2;
 
 /// The encoder state.
 #[derive(Debug)]
 enum State {
+    /// Starting state.
+    Start,
     /// Streaming out chunks.
-    Streaming,
+    EncodeChunks,
+    /// No more chunks to stream, mark the end.
+    EndOfChunks,
     /// Receiving trailers from a channel.
     ReceiveTrailers,
-    /// Streaming out trailers.
+    /// Streaming out trailers, if we received any.
     EncodeTrailers,
-    /// Writing the final CRLF
+    /// Writing out the final CRLF.
     EndOfStream,
     /// The stream has finished.
-    Done,
+    End,
 }
 
 /// An encoder for chunked encoding.
@@ -36,10 +41,11 @@ impl ChunkedEncoder {
     /// Create a new instance.
     pub(crate) fn new() -> Self {
         Self {
-            state: State::Streaming,
+            state: State::Start,
             bytes_written: 0,
         }
     }
+
     /// Encode an AsyncBufRead using "chunked" framing. This is used for streams
     /// whose length is not known up front.
     ///
@@ -67,16 +73,48 @@ impl ChunkedEncoder {
     ) -> Poll<io::Result<usize>> {
         self.bytes_written = 0;
         match self.state {
-            State::Streaming => self.encode_stream(res, cx, buf),
+            State::Start => self.init(res, cx, buf),
+            State::EncodeChunks => self.encode_chunks(res, cx, buf),
+            State::EndOfChunks => self.encode_chunks_eos(res, cx, buf),
             State::ReceiveTrailers => self.encode_trailers(res, cx, buf),
             State::EncodeTrailers => self.encode_trailers(res, cx, buf),
             State::EndOfStream => self.encode_eos(cx, buf),
-            State::Done => Poll::Ready(Ok(0)),
+            State::End => Poll::Ready(Ok(0)),
         }
     }
 
+    /// Switch the internal state to a new state.
+    fn set_state(&mut self, state: State) {
+        use State::*;
+        log::trace!("ChunkedEncoder state: {:?} -> {:?}", self.state, state);
+
+        #[cfg(debug_assertions)]
+        match self.state {
+            Start => assert!(matches!(state, EncodeChunks)),
+            EncodeChunks => assert!(matches!(state, EndOfChunks)),
+            EndOfChunks => assert!(matches!(state, ReceiveTrailers)),
+            ReceiveTrailers => assert!(matches!(state, EncodeTrailers | EndOfStream)),
+            EncodeTrailers => assert!(matches!(state, EndOfStream)),
+            EndOfStream => assert!(matches!(state, End)),
+            End => panic!("No state transitions allowed after the stream has ended"),
+        }
+
+        self.state = state;
+    }
+
+    /// Init encoding.
+    fn init(
+        &mut self,
+        res: &mut Response,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        self.set_state(State::EncodeChunks);
+        self.encode_chunks(res, cx, buf)
+    }
+
     /// Stream out data using chunked encoding.
-    fn encode_stream(
+    fn encode_chunks(
         &mut self,
         mut res: &mut Response,
         cx: &mut Context<'_>,
@@ -93,17 +131,11 @@ impl ChunkedEncoder {
             },
         };
 
-        // If the stream doesn't have any more bytes left to read we're done.
+        // If the stream doesn't have any more bytes left to read we're done
+        // sending chunks and it's time to move on.
         if src.len() == 0 {
-            // Write out the final empty chunk
-            let idx = self.bytes_written;
-            buf[idx] = b'0';
-            buf[idx + 1] = CR;
-            buf[idx + 2] = LF;
-            self.bytes_written += 3;
-
-            self.state = State::ReceiveTrailers;
-            return self.receive_trailers(res, cx, buf);
+            self.set_state(State::EndOfChunks);
+            return self.encode_chunks_eos(res, cx, buf);
         }
 
         // Each chunk is prefixed with the length of the data in hex, then a
@@ -114,10 +146,17 @@ impl ChunkedEncoder {
         // Calculate the max char count encoding the `len_prefix` statement
         // as hex would take. This is done by rounding up `log16(amt + 1)`.
         let hex_len = ((amt + 1) as f64).log(16.0).ceil() as usize;
-        let crlf_len = 2 * 2;
-        let buf_upper = buf_len.checked_sub(hex_len + crlf_len).unwrap_or(0);
+        let framing_len = hex_len + CRLF_LEN * 2;
+        let buf_upper = buf_len.checked_sub(framing_len).unwrap_or(0);
         let amt = amt.min(buf_upper);
         let len_prefix = format!("{:X}", amt).into_bytes();
+
+        // Request a new buf if the current buf is too small to write any data
+        // into. Empty frames should only be sent to mark the end of a stream.
+        if buf.len() <= framing_len {
+            cx.waker().wake_by_ref();
+            return Poll::Ready(Ok(self.bytes_written));
+        }
 
         // Write our frame header to the buffer.
         let lower = self.bytes_written;
@@ -134,7 +173,7 @@ impl ChunkedEncoder {
         Pin::new(&mut res).consume(amt);
         self.bytes_written += amt;
 
-        // Finalize the chunk with a final CRLF.
+        // Finalize the chunk with a closing CRLF.
         let idx = self.bytes_written;
         buf[idx] = CR;
         buf[idx + 1] = LF;
@@ -143,6 +182,29 @@ impl ChunkedEncoder {
         // Finally return how many bytes we've written to the buffer.
         log::trace!("sending {} bytes", self.bytes_written);
         Poll::Ready(Ok(self.bytes_written))
+    }
+
+    fn encode_chunks_eos(
+        &mut self,
+        res: &mut Response,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        // Request a new buf if the current buf is too small to write into.
+        if buf.len() < 3 {
+            cx.waker().wake_by_ref();
+            return Poll::Ready(Ok(self.bytes_written));
+        }
+
+        // Write out the final empty chunk
+        let idx = self.bytes_written;
+        buf[idx] = b'0';
+        buf[idx + 1] = CR;
+        buf[idx + 2] = LF;
+        self.bytes_written += 3;
+
+        self.set_state(State::ReceiveTrailers);
+        return self.receive_trailers(res, cx, buf);
     }
 
     /// Receive trailers sent to the response, and store them in an internal
@@ -154,7 +216,7 @@ impl ChunkedEncoder {
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         // TODO: actually wait for trailers to be received.
-        self.state = State::EncodeTrailers;
+        self.set_state(State::EncodeTrailers);
         self.encode_trailers(res, cx, buf)
     }
 
@@ -166,7 +228,7 @@ impl ChunkedEncoder {
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         // TODO: actually encode trailers here.
-        self.state = State::EndOfStream;
+        self.set_state(State::EndOfStream);
         self.encode_eos(cx, buf)
     }
 
@@ -178,8 +240,7 @@ impl ChunkedEncoder {
         buf[idx + 1] = LF;
         self.bytes_written += 2;
 
-        log::trace!("finished encoding chunked stream");
-        self.state = State::Done;
+        self.set_state(State::End);
         return Poll::Ready(Ok(self.bytes_written));
     }
 }
