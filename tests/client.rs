@@ -47,3 +47,23 @@ async fn test_multiple_header_values_for_same_header_name() {
 
     pretty_assertions::assert_eq!(res.header(&headers::SET_COOKIE).unwrap().len(), 2);
 }
+
+#[async_std::test]
+async fn test_response_newlines() {
+    let response_fixture = File::open(fixture_path("fixtures/response-newlines.txt"))
+        .await
+        .unwrap();
+
+    let res = client::decode(response_fixture).await.unwrap();
+
+    pretty_assertions::assert_eq!(
+        res.header(&headers::CONTENT_LENGTH)
+            .unwrap()
+            .last()
+            .unwrap()
+            .as_str()
+            .parse::<usize>()
+            .unwrap(),
+        78
+    );
+}
