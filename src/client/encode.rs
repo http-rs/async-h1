@@ -56,18 +56,20 @@ impl Encoder {
         log::trace!("> {}", &val);
         buf.write_all(val.as_bytes()).await?;
 
-        // Insert Host header
-        // Insert host
-        let host = req.url().host_str();
-        let host = host.ok_or_else(|| format_err!("Missing hostname"))?;
-        let val = if let Some(port) = req.url().port() {
-            format!("host: {}:{}\r\n", host, port)
-        } else {
-            format!("host: {}\r\n", host)
-        };
+        if req.header(&http_types::headers::HOST).is_none() {
+            // Insert Host header
+            // Insert host
+            let host = req.url().host_str();
+            let host = host.ok_or_else(|| format_err!("Missing hostname"))?;
+            let val = if let Some(port) = req.url().port() {
+                format!("host: {}:{}\r\n", host, port)
+            } else {
+                format!("host: {}\r\n", host)
+            };
 
-        log::trace!("> {}", &val);
-        buf.write_all(val.as_bytes()).await?;
+            log::trace!("> {}", &val);
+            buf.write_all(val.as_bytes()).await?;
+        }
 
         // Insert Proxy-Connection header when method is CONNECT
         if req.method() == Method::Connect {
