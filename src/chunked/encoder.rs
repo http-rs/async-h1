@@ -177,7 +177,7 @@ impl ChunkedEncoder {
         let idx = self.bytes_written;
         buf[idx] = CR;
         buf[idx + 1] = LF;
-        self.bytes_written += 2;
+        self.bytes_written += CRLF_LEN;
 
         // Finally return how many bytes we've written to the buffer.
         log::trace!("sending {} bytes", self.bytes_written);
@@ -201,7 +201,7 @@ impl ChunkedEncoder {
         buf[idx] = b'0';
         buf[idx + 1] = CR;
         buf[idx + 2] = LF;
-        self.bytes_written += 3;
+        self.bytes_written += 1 + CRLF_LEN;
 
         self.set_state(State::ReceiveTrailers);
         return self.receive_trailers(res, cx, buf);
@@ -238,7 +238,7 @@ impl ChunkedEncoder {
         // Write the final CRLF
         buf[idx] = CR;
         buf[idx + 1] = LF;
-        self.bytes_written += 2;
+        self.bytes_written += CRLF_LEN;
 
         self.set_state(State::End);
         return Poll::Ready(Ok(self.bytes_written));
