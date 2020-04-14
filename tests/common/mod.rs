@@ -77,7 +77,15 @@ impl TestCase {
         let mut file = self.result.lock().unwrap();
         file.seek(SeekFrom::Start(0)).await.unwrap();
         file.read_to_string(&mut result).await.unwrap();
-        result
+
+        let res = result
+            .replace('\r', "")
+            .replace('\r', "")
+            .replace('\n', "")
+            .replace("\\r", &String::from_utf8(vec![b'\r']).unwrap())
+            .replace("\\n", &String::from_utf8(vec![b'\n']).unwrap());
+        // println!("\n\n{}\n\n", res);
+        res
     }
 
     pub async fn read_expected(&self) -> String {
@@ -89,14 +97,22 @@ impl TestCase {
             .read_to_string(&mut expected)
             .await
             .unwrap();
-        expected
+
+        let res = expected
+            .replace('\r', "")
+            .replace('\r', "")
+            .replace('\n', "")
+            .replace("\\r", &String::from_utf8(vec![b'\r']).unwrap())
+            .replace("\\n", &String::from_utf8(vec![b'\n']).unwrap());
+        // println!("\n\n{}\n\n", res);
+        res
     }
 
     pub(crate) async fn assert(self) {
         let mut actual = self.read_result().await;
         let mut expected = self.read_expected().await;
-        assert!(!actual.is_empty(), "Received empty reply");
-        assert!(!expected.is_empty(), "Missing expected fixture");
+        assert!(!expected.is_empty(), "Expected fixture is empty");
+        assert!(!actual.is_empty(), "Response is empty");
 
         // munge actual and expected so that we don't rely on dates matching exactly
         munge_date(&mut expected, &mut actual);

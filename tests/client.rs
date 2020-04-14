@@ -10,11 +10,8 @@ use common::TestCase;
 
 #[async_std::test]
 async fn test_encode_request_add_date() {
-    let case = TestCase::new_client(
-        "fixtures/request-add-date.txt",
-        "fixtures/response-add-date.txt",
-    )
-    .await;
+    let case =
+        TestCase::new_client("fixtures/add-date-req.http", "fixtures/add-date-res.http").await;
 
     let url = Url::parse("http://localhost:8080").unwrap();
     let mut req = Request::new(Method::Post, url);
@@ -28,7 +25,7 @@ async fn test_encode_request_add_date() {
 
 #[async_std::test]
 async fn test_response_no_date() {
-    let response_fixture = File::open(fixture_path("fixtures/response-no-date.txt"))
+    let response_fixture = File::open(fixture_path("fixtures/no-date-res.http"))
         .await
         .unwrap();
 
@@ -39,7 +36,7 @@ async fn test_response_no_date() {
 
 #[async_std::test]
 async fn test_multiple_header_values_for_same_header_name() {
-    let response_fixture = File::open(fixture_path("fixtures/response-multiple-cookies.txt"))
+    let response_fixture = File::open(fixture_path("fixtures/multiple-cookies-res.http"))
         .await
         .unwrap();
 
@@ -50,7 +47,7 @@ async fn test_multiple_header_values_for_same_header_name() {
 
 #[async_std::test]
 async fn test_response_newlines() {
-    let response_fixture = File::open(fixture_path("fixtures/response-newlines.txt"))
+    let response_fixture = File::open(fixture_path("fixtures/newlines-res.http"))
         .await
         .unwrap();
 

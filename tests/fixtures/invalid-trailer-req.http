@@ -1,0 +1,8 @@
+GET / HTTP/1.1\r\n
+content-type: application/octet-stream\r\n
+transfer-encoding: chunked\r\n
+trailer: x-invalid\r\n
+\r\n
+0\r\n
+x-invalid: å\r\n
+\r\n

@@ -1,0 +1,7 @@
+HTTP/1.1 200 OK\r\n
+content-length: 78\r\n
+date: {DATE}\r\n
+content-type: text/plain; charset=utf-8\r\n
+\r\n
+http specifies headers are separated with \r\n but many servers don't do that\r\n
+\r\n

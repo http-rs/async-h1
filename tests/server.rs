@@ -7,11 +7,8 @@ mod common;
 
 #[async_std::test]
 async fn test_basic_request() {
-    let case = TestCase::new_server(
-        "fixtures/request-add-date.txt",
-        "fixtures/response-add-date.txt",
-    )
-    .await;
+    let case =
+        TestCase::new_server("fixtures/add-date-req.http", "fixtures/add-date-res.http").await;
     let addr = "http://example.com";
 
     async_h1::accept(addr, case.clone(), |_req| async {
@@ -28,8 +25,8 @@ async fn test_basic_request() {
 #[async_std::test]
 async fn test_chunked_basic() {
     let case = TestCase::new_server(
-        "fixtures/request-chunked-basic.txt",
-        "fixtures/response-chunked-basic.txt",
+        "fixtures/chunked-basic-req.http",
+        "fixtures/chunked-basic-res.http",
     )
     .await;
     let addr = "http://example.com";
@@ -54,8 +51,8 @@ async fn test_chunked_basic() {
 #[async_std::test]
 async fn test_chunked_echo() {
     let case = TestCase::new_server(
-        "fixtures/request-chunked-echo.txt",
-        "fixtures/response-chunked-echo.txt",
+        "fixtures/chunked-echo-req.http",
+        "fixtures/chunked-echo-res.http",
     )
     .await;
 
@@ -82,8 +79,8 @@ async fn test_chunked_echo() {
 async fn test_unexpected_eof() {
     // We can't predict unexpected EOF, so the response content-length is still 11
     let case = TestCase::new_server(
-        "fixtures/request-unexpected-eof.txt",
-        "fixtures/response-unexpected-eof.txt",
+        "fixtures/unexpected-eof-req.http",
+        "fixtures/unexpected-eof-res.http",
     )
     .await;
     let addr = "http://example.com";
@@ -108,8 +105,8 @@ async fn test_unexpected_eof() {
 #[async_std::test]
 async fn test_invalid_trailer() {
     let case = TestCase::new_server(
-        "fixtures/request-invalid-trailer.txt",
-        "fixtures/response-invalid-trailer.txt",
+        "fixtures/invalid-trailer-req.http",
+        "fixtures/invalid-trailer-res.http",
     )
     .await;
     let addr = "http://example.com";

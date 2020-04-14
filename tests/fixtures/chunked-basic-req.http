@@ -1,0 +1,4 @@
+GET / HTTP/1.1\r\n
+host: example.com\r\n
+user-agent: curl/7.54.0\r\n
+\r\n

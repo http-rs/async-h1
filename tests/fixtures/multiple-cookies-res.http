@@ -1,0 +1,7 @@
+HTTP/1.1 200 OK\r\n
+host: example.com\r\n
+content-length: 0\r\n
+set-cookie: sessionId=e8bb43229de9\r\n
+set-cookie: qwerty=219ffwef9w0f\r\n
+\r\n
+\r\n

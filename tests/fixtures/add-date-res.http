@@ -1,0 +1,5 @@
+HTTP/1.1 200 OK\r\n
+content-length: 0\r\n
+date: {DATE}\r\n
+content-type: text/plain; charset=utf-8\r\n
+\r\n
