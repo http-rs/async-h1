@@ -30,7 +30,7 @@ async fn accept(addr: String, stream: TcpStream) -> http_types::Result<()> {
     async_h1::accept(&addr, stream.clone(), |_req| async move {
         let mut res = Response::new(StatusCode::Ok);
         res.insert_header("Content-Type", "text/plain")?;
-        res.set_body("Hello");
+        res.set_body("Hello world");
         Ok(res)
     })
     .await?;
