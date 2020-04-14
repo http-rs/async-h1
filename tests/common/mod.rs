@@ -6,6 +6,10 @@ use async_std::task::{Context, Poll};
 use std::pin::Pin;
 use std::sync::Mutex;
 
+mod test3;
+
+pub use test3::TestCase as TestCase2;
+
 #[derive(Debug, Copy, Clone)]
 #[allow(dead_code)]
 enum Direction {

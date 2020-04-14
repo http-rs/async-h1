@@ -217,12 +217,14 @@ impl Read for Encoder {
         // we keep track how many bytes of the head and body we've read
         // in this call of `poll_read`
         self.bytes_read = 0;
-        match self.state {
+        let res = match self.state {
             EncoderState::Start => self.encode_start(cx, buf),
             EncoderState::Head => self.encode_head(cx, buf),
             EncoderState::FixedBody => self.encode_fixed_body(cx, buf),
             EncoderState::ChunkedBody => self.encode_chunked_body(cx, buf),
             EncoderState::Done => Poll::Ready(Ok(0)),
-        }
+        };
+        // dbg!(String::from_utf8(buf[..self.bytes_read].to_vec()).unwrap());
+        res
     }
 }
