@@ -79,33 +79,6 @@ async fn test_chunked_echo() {
 }
 
 #[async_std::test]
-async fn test_chunked_long() {
-    let case = TestCase::new_server(
-        "fixtures/request-chunked-long.txt",
-        "fixtures/response-chunked-long.txt",
-    )
-    .await;
-
-    let addr = "http://example.com";
-    async_h1::accept(addr, case.clone(), |req| async {
-        let ct = req.content_type();
-        let body: Body = req.into();
-
-        let mut res = Response::new(StatusCode::Ok);
-        res.set_body(body);
-        if let Some(ct) = ct {
-            res.set_content_type(ct);
-        }
-
-        Ok(res)
-    })
-    .await
-    .unwrap();
-
-    case.assert().await;
-}
-
-#[async_std::test]
 async fn test_unexpected_eof() {
     // We can't predict unexpected EOF, so the response content-length is still 11
     let case = TestCase::new_server(
