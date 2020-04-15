@@ -2,7 +2,7 @@ use async_std::io::{self, Read};
 use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use http_types::format_err;
-use http_types::Request;
+use http_types::{Method, Request};
 
 use std::pin::Pin;
 
@@ -41,6 +41,14 @@ impl Encoder {
             url.push_str(query);
         }
 
+        if req.method() == Method::Connect {
+            let host = req.url().host_str();
+            let host = host.ok_or_else(|| format_err!("Missing hostname"))?;
+            let port = req.url().port_or_known_default();
+            let port = port.ok_or_else(|| format_err!("Missing port"))?;
+            url = format!("{}:{}", host, port);
+        }
+
         let val = format!("{} {} HTTP/1.1\r\n", req.method(), url);
         log::trace!("> {}", &val);
         buf.write_all(val.as_bytes()).await?;
@@ -57,6 +65,13 @@ impl Encoder {
 
         log::trace!("> {}", &val);
         buf.write_all(val.as_bytes()).await?;
+
+        // Insert Proxy-Connection header when method is CONNECT
+        if req.method() == Method::Connect {
+            let val = "proxy-connection: keep-alive\r\n".to_owned();
+            log::trace!("> {}", &val);
+            buf.write_all(val.as_bytes()).await?;
+        }
 
         // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
         // send all items in chunks.
