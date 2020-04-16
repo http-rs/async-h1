@@ -67,3 +67,20 @@ async fn test_response_newlines() {
         78
     );
 }
+
+#[async_std::test]
+async fn test_encode_request_with_connect() {
+    let case = TestCase::new_client(
+        "fixtures/request-with-connect.txt",
+        "fixtures/response-with-connect.txt",
+    )
+    .await;
+
+    let url = Url::parse("https://example.com:443").unwrap();
+    let req = Request::new(Method::Connect, url);
+
+    let res = client::connect(case.clone(), req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::Ok);
+
+    case.assert().await;
+}
