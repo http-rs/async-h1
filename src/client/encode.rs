@@ -41,6 +41,9 @@ impl Encoder {
             url.push_str(query);
         }
 
+        // A client sending a CONNECT request MUST consists of only the host
+        // name and port number of the tunnel destination, separated by a colon.
+        // See: https://tools.ietf.org/html/rfc7231#section-4.3.6
         if req.method() == Method::Connect {
             let host = req.url().host_str();
             let host = host.ok_or_else(|| format_err!("Missing hostname"))?;
