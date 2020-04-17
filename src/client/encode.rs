@@ -6,8 +6,6 @@ use http_types::{Method, Request};
 
 use std::pin::Pin;
 
-use crate::date::fmt_http_date;
-
 /// An HTTP encoder.
 #[doc(hidden)]
 #[derive(Debug)]
@@ -90,11 +88,6 @@ impl Encoder {
             // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Transfer-Encoding
             //      https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Trailer
         }
-
-        let date = fmt_http_date(std::time::SystemTime::now());
-        buf.write_all(b"date: ").await?;
-        buf.write_all(date.as_bytes()).await?;
-        buf.write_all(b"\r\n").await?;
 
         for (header, values) in req.iter() {
             for value in values.iter() {
