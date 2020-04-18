@@ -1,3 +1,4 @@
+use async_h1::HttpServer;
 use async_std::net::{TcpListener, TcpStream};
 use async_std::prelude::*;
 use async_std::task;
@@ -27,7 +28,7 @@ async fn main() -> http_types::Result<()> {
 // Take a TCP stream, and convert it into sequential HTTP request / response pairs.
 async fn accept(addr: String, stream: TcpStream) -> http_types::Result<()> {
     println!("starting new connection from {}", stream.peer_addr()?);
-    async_h1::accept(&addr, stream.clone(), |_req| async move {
+    HttpServer::accept(&addr, stream.clone(), |_req| async move {
         let mut res = Response::new(StatusCode::Ok);
         res.insert_header("Content-Type", "text/plain")?;
         res.set_body("Hello world");

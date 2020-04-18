@@ -13,71 +13,86 @@ mod encode;
 use decode::decode;
 use encode::Encoder;
 
-/// Configure the server.
-#[derive(Debug, Clone)]
-pub struct ServerOptions {
+/// HTTP/1.1 server.
+#[derive(Debug)]
+pub struct HttpServer {
+    builder: HttpServerBuilder,
+}
+
+impl HttpServer {
+    /// Create a new `HttpServer` builder that takes various configuration.
+    pub fn builder() -> HttpServerBuilder {
+        HttpServerBuilder::new()
+    }
+
+    /// Accept a new incoming HTTP/1.1 connection.
+    ///
+    /// Supports `KeepAlive` requests by default.
+    pub async fn accept<RW, F, Fut>(addr: &str, io: RW, endpoint: F) -> http_types::Result<()>
+    where
+        RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
+        F: Fn(Request) -> Fut,
+        Fut: Future<Output = http_types::Result<Response>>,
+    {
+        let builder = HttpServerBuilder::new();
+        builder.accept(addr, io, endpoint).await
+    }
+}
+
+/// HTTP/1.1 server builder.
+#[derive(Debug)]
+pub struct HttpServerBuilder {
     /// Timeout to handle headers. Defaults to 60s.
     headers_timeout: Option<Duration>,
 }
 
-impl Default for ServerOptions {
-    fn default() -> Self {
+impl HttpServerBuilder {
+    /// Create a new instance of `HttpServerBuilder`.
+    pub fn new() -> Self {
         Self {
             headers_timeout: Some(Duration::from_secs(60)),
         }
     }
-}
 
-/// Accept a new incoming HTTP/1.1 connection.
-///
-/// Supports `KeepAlive` requests by default.
-pub async fn accept<RW, F, Fut>(addr: &str, io: RW, endpoint: F) -> http_types::Result<()>
-where
-    RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
-    F: Fn(Request) -> Fut,
-    Fut: Future<Output = http_types::Result<Response>>,
-{
-    accept_with_opts(addr, io, endpoint, Default::default()).await
-}
+    /// Accept a new incoming HTTP/1.1 connection.
+    ///
+    /// Supports `KeepAlive` requests by default.
+    pub async fn accept<RW, F, Fut>(
+        self,
+        addr: &str,
+        mut io: RW,
+        endpoint: F,
+    ) -> http_types::Result<()>
+    where
+        RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
+        F: Fn(Request) -> Fut,
+        Fut: Future<Output = http_types::Result<Response>>,
+    {
+        loop {
+            // Decode a new request, timing out if this takes longer than the timeout duration.
+            let fut = decode(addr, io.clone());
 
-/// Accept a new incoming HTTP/1.1 connection.
-///
-/// Supports `KeepAlive` requests by default.
-pub async fn accept_with_opts<RW, F, Fut>(
-    addr: &str,
-    mut io: RW,
-    endpoint: F,
-    opts: ServerOptions,
-) -> http_types::Result<()>
-where
-    RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
-    F: Fn(Request) -> Fut,
-    Fut: Future<Output = http_types::Result<Response>>,
-{
-    loop {
-        // Decode a new request, timing out if this takes longer than the timeout duration.
-        let fut = decode(addr, io.clone());
+            let req = if let Some(timeout_duration) = self.headers_timeout {
+                match timeout(timeout_duration, fut).await {
+                    Ok(Ok(Some(r))) => r,
+                    Ok(Ok(None)) | Err(TimeoutError { .. }) => break, /* EOF or timeout */
+                    Ok(Err(e)) => return Err(e),
+                }
+            } else {
+                match fut.await? {
+                    Some(r) => r,
+                    None => break, /* EOF */
+                }
+            };
 
-        let req = if let Some(timeout_duration) = opts.headers_timeout {
-            match timeout(timeout_duration, fut).await {
-                Ok(Ok(Some(r))) => r,
-                Ok(Ok(None)) | Err(TimeoutError { .. }) => break, /* EOF or timeout */
-                Ok(Err(e)) => return Err(e),
-            }
-        } else {
-            match fut.await? {
-                Some(r) => r,
-                None => break, /* EOF */
-            }
-        };
+            // Pass the request to the endpoint and encode the response.
+            let res = endpoint(req).await?;
+            let mut encoder = Encoder::encode(res);
 
-        // Pass the request to the endpoint and encode the response.
-        let res = endpoint(req).await?;
-        let mut encoder = Encoder::encode(res);
+            // Stream the response to the writer.
+            io::copy(&mut encoder, &mut io).await?;
+        }
 
-        // Stream the response to the writer.
-        io::copy(&mut encoder, &mut io).await?;
+        Ok(())
     }
-
-    Ok(())
 }
