@@ -27,7 +27,7 @@
 //! __HTTP client__
 //!
 //! ```no_run
-//! use async_h1::client;
+//! use async_h1::HttpClient;
 //! use async_std::net::{TcpStream};
 //! use http_types::{Error, Method, Request, Url};
 //!
@@ -41,7 +41,7 @@
 //!         println!("making request {}/2", i + 1);
 //!         let url = Url::parse(&format!("http://{}/foo", peer_addr)).unwrap();
 //!         let req = Request::new(Method::Get, url);
-//!         let res = client::connect(stream.clone(), req).await?;
+//!         let res = HttpClient::connect(stream.clone(), req).await?;
 //!         println!("{:?}", res);
 //!     }
 //!     Ok(())
@@ -115,10 +115,5 @@ mod server;
 #[doc(hidden)]
 pub mod client;
 
-pub use client::connect;
-pub use server::{HttpServer, HttpServerBuilder};
-
-// pub struct HttpClient {}
-// impl HttpClient {
-//     pub fn connect() {}
-// }
+pub use client::{HttpClient, HttpClientBuilder};
+pub use server::HttpServer;

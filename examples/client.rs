@@ -1,4 +1,4 @@
-use async_h1::client;
+use async_h1::HttpClient;
 use async_std::net::TcpStream;
 use http_types::{Error, Method, Request, Url};
 
@@ -12,7 +12,7 @@ async fn main() -> Result<(), Error> {
         println!("making request {}/2", i + 1);
         let url = Url::parse(&format!("http://{}/foo", peer_addr)).unwrap();
         let req = Request::new(Method::Get, url);
-        let res = client::connect(stream.clone(), req).await?;
+        let res = HttpClient::connect(stream.clone(), req).await?;
         println!("{:?}", res);
     }
     Ok(())

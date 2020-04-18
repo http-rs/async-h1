@@ -1,5 +1,5 @@
 use crate::common::fixture_path;
-use async_h1::client;
+use async_h1::HttpClient;
 use async_std::fs::File;
 use http_types::{headers, Method, Request, StatusCode};
 use url::Url;
@@ -20,7 +20,7 @@ async fn test_encode_request_add_date() {
     let mut req = Request::new(Method::Post, url);
     req.set_body("hello");
 
-    let res = client::connect(case.clone(), req).await.unwrap();
+    let res = HttpClient::connect(case.clone(), req).await.unwrap();
     assert_eq!(res.status(), StatusCode::Ok);
 
     case.assert().await;
@@ -32,7 +32,7 @@ async fn test_response_no_date() {
         .await
         .unwrap();
 
-    let res = client::decode(response_fixture).await.unwrap();
+    let res = HttpClient::decode(response_fixture).await.unwrap();
 
     pretty_assertions::assert_eq!(res.header(&headers::DATE).is_some(), true);
 }
@@ -43,7 +43,7 @@ async fn test_multiple_header_values_for_same_header_name() {
         .await
         .unwrap();
 
-    let res = client::decode(response_fixture).await.unwrap();
+    let res = HttpClient::decode(response_fixture).await.unwrap();
 
     pretty_assertions::assert_eq!(res.header(&headers::SET_COOKIE).unwrap().len(), 2);
 }
@@ -54,7 +54,7 @@ async fn test_response_newlines() {
         .await
         .unwrap();
 
-    let res = client::decode(response_fixture).await.unwrap();
+    let res = HttpClient::decode(response_fixture).await.unwrap();
 
     pretty_assertions::assert_eq!(
         res.header(&headers::CONTENT_LENGTH)
@@ -79,7 +79,7 @@ async fn test_encode_request_with_connect() {
     let url = Url::parse("https://example.com:443").unwrap();
     let req = Request::new(Method::Connect, url);
 
-    let res = client::connect(case.clone(), req).await.unwrap();
+    let res = HttpClient::connect(case.clone(), req).await.unwrap();
     assert_eq!(res.status(), StatusCode::Ok);
 
     case.assert().await;
