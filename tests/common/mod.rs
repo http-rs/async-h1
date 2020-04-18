@@ -6,10 +6,6 @@ use async_std::task::{Context, Poll};
 use std::pin::Pin;
 use std::sync::Mutex;
 
-mod test3;
-
-pub use test3::TestCase as TestCase2;
-
 #[derive(Debug, Copy, Clone)]
 #[allow(dead_code)]
 enum Direction {
@@ -75,6 +71,7 @@ impl TestCase {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn read_result(&self) -> String {
         use async_std::prelude::*;
         let mut result = String::new();
@@ -84,6 +81,7 @@ impl TestCase {
         result
     }
 
+    #[allow(dead_code)]
     pub async fn read_expected(&self) -> String {
         use async_std::prelude::*;
         let mut expected = std::string::String::new();
@@ -96,6 +94,7 @@ impl TestCase {
         expected
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn assert(self) {
         let mut actual = self.read_result().await;
         let mut expected = self.read_expected().await;
