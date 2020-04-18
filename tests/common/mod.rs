@@ -71,6 +71,7 @@ impl TestCase {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn read_result(&self) -> String {
         use async_std::prelude::*;
         let mut result = String::new();
@@ -80,6 +81,7 @@ impl TestCase {
         result
     }
 
+    #[allow(dead_code)]
     pub async fn read_expected(&self) -> String {
         use async_std::prelude::*;
         let mut expected = std::string::String::new();
@@ -92,6 +94,7 @@ impl TestCase {
         expected
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn assert(self) {
         let mut actual = self.read_result().await;
         let mut expected = self.read_expected().await;
@@ -99,8 +102,8 @@ impl TestCase {
         assert!(!expected.is_empty(), "Missing expected fixture");
 
         // munge actual and expected so that we don't rely on dates matching exactly
-        munge_date(&mut expected, &mut actual);
-        pretty_assertions::assert_eq!(expected, actual);
+        munge_date(&mut actual, &mut expected);
+        pretty_assertions::assert_eq!(actual, expected);
     }
 }
 
@@ -109,14 +112,16 @@ pub(crate) fn fixture_path(relative_path: &str) -> PathBuf {
     directory.join("tests").join(relative_path)
 }
 
-pub(crate) fn munge_date(expected: &mut String, actual: &mut String) {
+pub(crate) fn munge_date(actual: &mut String, expected: &mut String) {
     if let Some(i) = expected.find("{DATE}") {
         match actual.find("date: ") {
             Some(j) => {
                 let eol = actual[j + 6..].find("\r\n").expect("missing eol");
                 expected.replace_range(i..i + 6, &actual[j + 6..j + 6 + eol]);
             }
-            None => expected.replace_range(i..i + 6, ""),
+            None => {
+                expected.replace_range(i..i + 6, "");
+            }
         }
     }
 }
