@@ -4,7 +4,7 @@ use std::pin::Pin;
 
 use async_std::io;
 use async_std::io::prelude::*;
-use async_std::task::{ready, Context, Poll};
+use async_std::task::{Context, Poll};
 use http_types::Response;
 
 use crate::chunked::ChunkedEncoder;
@@ -197,14 +197,22 @@ impl Encoder {
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         let buf = &mut buf[self.bytes_read..];
-        let read = ready!(self.chunked.encode(&mut self.res, cx, buf))?;
-
-        self.bytes_read += read;
-        if self.bytes_read == 0 {
-            self.state = EncoderState::Done
+        match self.chunked.encode(&mut self.res, cx, buf) {
+            Poll::Ready(Ok(read)) => {
+                self.bytes_read += read;
+                if self.bytes_read == 0 {
+                    self.state = EncoderState::Done
+                }
+                Poll::Ready(Ok(self.bytes_read))
+            }
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Pending => {
+                if self.bytes_read > 0 {
+                    return Poll::Ready(Ok(self.bytes_read));
+                }
+                Poll::Pending
+            }
         }
-
-        Poll::Ready(Ok(self.bytes_read))
     }
 }
 
