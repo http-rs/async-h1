@@ -84,8 +84,10 @@ impl Encoder {
             )?;
         }
 
-        let date = fmt_http_date(std::time::SystemTime::now());
-        std::io::Write::write_fmt(&mut self.head, format_args!("date: {}\r\n", date))?;
+        if self.res.header(&http_types::headers::DATE).is_none() {
+            let date = fmt_http_date(std::time::SystemTime::now());
+            std::io::Write::write_fmt(&mut self.head, format_args!("date: {}\r\n", date))?;
+        }
 
         for (header, values) in self.res.iter() {
             for value in values.iter() {
