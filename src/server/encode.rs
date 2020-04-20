@@ -89,7 +89,12 @@ impl Encoder {
             std::io::Write::write_fmt(&mut self.head, format_args!("date: {}\r\n", date))?;
         }
 
-        for (header, values) in self.res.iter() {
+        let iter = self
+            .res
+            .iter()
+            .filter(|(h, _)| h != &&http_types::headers::CONTENT_LENGTH)
+            .filter(|(h, _)| h != &&http_types::headers::TRANSFER_ENCODING);
+        for (header, values) in iter {
             for value in values.iter() {
                 std::io::Write::write_fmt(
                     &mut self.head,
