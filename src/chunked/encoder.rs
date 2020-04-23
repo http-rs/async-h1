@@ -72,13 +72,13 @@ impl ChunkedEncoder {
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         self.bytes_written = 0;
-        let res = self.exec(res, cx, buf);
+        let res = self.dispatch(res, cx, buf);
         log::trace!("ChunkedEncoder {} bytes written", self.bytes_written);
         res
     }
 
     /// Execute the right method for the current state.
-    fn exec(
+    fn dispatch(
         &mut self,
         res: &mut Response,
         cx: &mut Context<'_>,
@@ -118,7 +118,7 @@ impl ChunkedEncoder {
         }
 
         self.state = state;
-        self.exec(res, cx, buf)
+        self.dispatch(res, cx, buf)
     }
 
     /// Stream out data using chunked encoding.

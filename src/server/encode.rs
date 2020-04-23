@@ -60,7 +60,7 @@ impl Read for Encoder {
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         self.bytes_written = 0;
-        let res = self.exec(cx, buf);
+        let res = self.dispatch(cx, buf);
         log::trace!("ServerEncoder {} bytes written", self.bytes_written);
         res
     }
@@ -103,11 +103,11 @@ impl Encoder {
         }
 
         self.state = state;
-        self.exec(cx, buf)
+        self.dispatch(cx, buf)
     }
 
     /// Execute the right method for the current state.
-    fn exec(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+    fn dispatch(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
         match self.state {
             State::Start => self.set_state(State::ComputeHead, cx, buf),
             State::ComputeHead => self.compute_head(cx, buf),
