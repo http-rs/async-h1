@@ -165,12 +165,10 @@ impl Encoder {
                 Some(body_len) => {
                     self.body_len = body_len;
                     self.state = State::EncodeFixedBody;
-                    log::trace!("Server response encoding: fixed length body");
                     return self.encode_fixed_body(cx, buf);
                 }
                 None => {
                     self.state = State::EncodeChunkedBody;
-                    log::trace!("Server response encoding: chunked body");
                     return self.encode_chunked_body(cx, buf);
                 }
             };
