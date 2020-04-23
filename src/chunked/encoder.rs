@@ -13,7 +13,7 @@ const CRLF_LEN: usize = 2;
 #[derive(Debug)]
 enum State {
     /// Starting state.
-    Init,
+    Start,
     /// Streaming out chunks.
     EncodeChunks,
     /// No more chunks to stream, mark the end.
@@ -41,7 +41,7 @@ impl ChunkedEncoder {
     /// Create a new instance.
     pub(crate) fn new() -> Self {
         Self {
-            state: State::Init,
+            state: State::Start,
             bytes_written: 0,
         }
     }
@@ -72,48 +72,53 @@ impl ChunkedEncoder {
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         self.bytes_written = 0;
-        let res = match self.state {
-            State::Init => self.init(res, cx, buf),
-            State::EncodeChunks => self.encode_chunks(res, cx, buf),
-            State::EndOfChunks => self.encode_chunks_eos(res, cx, buf),
-            State::ReceiveTrailers => self.encode_trailers(res, cx, buf),
-            State::EncodeTrailers => self.encode_trailers(res, cx, buf),
-            State::EndOfStream => self.encode_eos(cx, buf),
-            State::End => Poll::Ready(Ok(self.bytes_written)),
-        };
-
+        let res = self.exec(res, cx, buf);
         log::trace!("ChunkedEncoder {} bytes written", self.bytes_written);
         res
     }
 
-    /// Switch the internal state to a new state.
-    fn set_state(&mut self, state: State) {
-        use State::*;
-        log::trace!("ChunkedEncoder state: {:?} -> {:?}", self.state, state);
-
-        #[cfg(debug_assertions)]
-        match self.state {
-            Init => assert!(matches!(state, EncodeChunks)),
-            EncodeChunks => assert!(matches!(state, EndOfChunks)),
-            EndOfChunks => assert!(matches!(state, ReceiveTrailers)),
-            ReceiveTrailers => assert!(matches!(state, EncodeTrailers | EndOfStream)),
-            EncodeTrailers => assert!(matches!(state, EndOfStream)),
-            EndOfStream => assert!(matches!(state, End)),
-            End => panic!("No state transitions allowed after the stream has ended"),
-        }
-
-        self.state = state;
-    }
-
-    /// Init encoding.
-    fn init(
+    /// Execute the right method for the current state.
+    fn exec(
         &mut self,
         res: &mut Response,
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        self.set_state(State::EncodeChunks);
-        self.encode_chunks(res, cx, buf)
+        match self.state {
+            State::Start => self.set_state(State::EncodeChunks, res, cx, buf),
+            State::EncodeChunks => self.encode_chunks(res, cx, buf),
+            State::EndOfChunks => self.encode_chunks_eos(res, cx, buf),
+            State::ReceiveTrailers => self.receive_trailers(res, cx, buf),
+            State::EncodeTrailers => self.encode_trailers(res, cx, buf),
+            State::EndOfStream => self.encode_eos(res, cx, buf),
+            State::End => Poll::Ready(Ok(self.bytes_written)),
+        }
+    }
+
+    /// Switch the internal state to a new state.
+    fn set_state(
+        &mut self,
+        state: State,
+        res: &mut Response,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        use State::*;
+        log::trace!("ChunkedEncoder state: {:?} -> {:?}", self.state, state);
+
+        #[cfg(debug_assertions)]
+        match self.state {
+            Start => assert!(matches!(state, EncodeChunks)),
+            EncodeChunks => assert!(matches!(state, EndOfChunks)),
+            EndOfChunks => assert!(matches!(state, ReceiveTrailers)),
+            ReceiveTrailers => assert!(matches!(state, EncodeTrailers | EndOfStream)),
+            EncodeTrailers => assert!(matches!(state, EndOfStream)),
+            EndOfStream => assert!(matches!(state, End)),
+            End => panic!("No state transitions allowed after the ChunkedEncoder has ended"),
+        }
+
+        self.state = state;
+        self.exec(res, cx, buf)
     }
 
     /// Stream out data using chunked encoding.
@@ -137,8 +142,7 @@ impl ChunkedEncoder {
         // If the stream doesn't have any more bytes left to read we're done
         // sending chunks and it's time to move on.
         if src.len() == 0 {
-            self.set_state(State::EndOfChunks);
-            return self.encode_chunks_eos(res, cx, buf);
+            return self.set_state(State::EndOfChunks, res, cx, buf);
         }
 
         // Each chunk is prefixed with the length of the data in hex, then a
@@ -205,8 +209,7 @@ impl ChunkedEncoder {
         buf[idx + 2] = LF;
         self.bytes_written += 1 + CRLF_LEN;
 
-        self.set_state(State::ReceiveTrailers);
-        return self.receive_trailers(res, cx, buf);
+        self.set_state(State::ReceiveTrailers, res, cx, buf)
     }
 
     /// Receive trailers sent to the response, and store them in an internal
@@ -218,31 +221,32 @@ impl ChunkedEncoder {
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         // TODO: actually wait for trailers to be received.
-        self.set_state(State::EncodeTrailers);
-        self.encode_trailers(res, cx, buf)
+        self.set_state(State::EncodeTrailers, res, cx, buf)
     }
 
     /// Send trailers to the buffer.
     fn encode_trailers(
         &mut self,
-        _res: &mut Response,
+        res: &mut Response,
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         // TODO: actually encode trailers here.
-        self.set_state(State::EndOfStream);
-        self.encode_eos(cx, buf)
+        self.set_state(State::EndOfStream, res, cx, buf)
     }
 
     /// Encode the end of the stream.
-    fn encode_eos(&mut self, _cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+    fn encode_eos(
+        &mut self,
+        res: &mut Response,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
         let idx = self.bytes_written;
         // Write the final CRLF
         buf[idx] = CR;
         buf[idx + 1] = LF;
         self.bytes_written += CRLF_LEN;
-
-        self.set_state(State::End);
-        return Poll::Ready(Ok(self.bytes_written));
+        self.set_state(State::End, res, cx, buf)
     }
 }
