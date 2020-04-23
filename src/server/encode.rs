@@ -20,17 +20,17 @@ pub(crate) struct Encoder {
     /// The state of the encoding process
     state: State,
     /// Track bytes read in a call to poll_read.
-    bytes_read: usize,
+    bytes_written: usize,
     /// The data we're writing as part of the head section.
     head: Vec<u8>,
     /// The amount of bytes read from the head section.
-    head_bytes_read: usize,
+    head_bytes_written: usize,
     /// The total length of the body.
     /// This is only used in the known-length body encoder.
     body_len: usize,
     /// The amount of bytes read from the body.
     /// This is only used in the known-length body encoder.
-    body_bytes_read: usize,
+    body_bytes_written: usize,
     /// An encoder for chunked encoding.
     chunked: ChunkedEncoder,
 }
@@ -51,11 +51,11 @@ impl Encoder {
         Self {
             res,
             state: State::Init,
-            bytes_read: 0,
+            bytes_written: 0,
             head: vec![],
-            head_bytes_read: 0,
+            head_bytes_written: 0,
             body_len: 0,
-            body_bytes_read: 0,
+            body_bytes_written: 0,
             chunked: ChunkedEncoder::new(),
         }
     }
@@ -65,16 +65,16 @@ impl Encoder {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        self.bytes_read = 0;
+        self.bytes_written = 0;
         let res = match self.state {
             State::Init => self.init(cx, buf),
             State::ComputeHead => self.compute_head(cx, buf),
             State::EncodeHead => self.encode_head(cx, buf),
             State::FixedBody => self.encode_fixed_body(cx, buf),
             State::ChunkedBody => self.encode_chunked_body(cx, buf),
-            State::End => Poll::Ready(Ok(self.bytes_read)),
+            State::End => Poll::Ready(Ok(self.bytes_written)),
         };
-        log::trace!("ServerEncoder {} bytes written", self.bytes_read);
+        log::trace!("ServerEncoder {} bytes written", self.bytes_written);
         res
     }
 
@@ -144,15 +144,15 @@ impl Encoder {
     fn encode_head(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
         // Read from the serialized headers, url and methods.
         let head_len = self.head.len();
-        let len = std::cmp::min(head_len - self.head_bytes_read, buf.len());
-        let range = self.head_bytes_read..self.head_bytes_read + len;
+        let len = std::cmp::min(head_len - self.head_bytes_written, buf.len());
+        let range = self.head_bytes_written..self.head_bytes_written + len;
         buf[0..len].copy_from_slice(&self.head[range]);
-        self.bytes_read += len;
-        self.head_bytes_read += len;
+        self.bytes_written += len;
+        self.head_bytes_written += len;
 
         // If we've read the total length of the head we're done
         // reading the head and can transition to reading the body
-        if self.head_bytes_read == head_len {
+        if self.head_bytes_written == head_len {
             // The response length lets us know if we are encoding
             // our body in chunks or not
             match self.res.len() {
@@ -171,7 +171,7 @@ impl Encoder {
         } else {
             // If we haven't read the entire header it means `buf` isn't
             // big enough. Break out of loop and return from `poll_read`
-            return Poll::Ready(Ok(self.bytes_read));
+            return Poll::Ready(Ok(self.bytes_written));
         }
     }
 
@@ -183,47 +183,48 @@ impl Encoder {
     ) -> Poll<io::Result<usize>> {
         // Double check that we didn't somehow read more bytes than
         // can fit in our buffer
-        debug_assert!(self.bytes_read <= buf.len());
+        debug_assert!(self.bytes_written <= buf.len());
 
         // ensure we have at least room for 1 more byte in our buffer
-        if self.bytes_read == buf.len() {
-            return Poll::Ready(Ok(self.bytes_read));
+        if self.bytes_written == buf.len() {
+            return Poll::Ready(Ok(self.bytes_written));
         }
 
         // Figure out how many bytes we can read.
-        let upper_bound = (self.bytes_read + self.body_len - self.body_bytes_read).min(buf.len());
+        let upper_bound =
+            (self.bytes_written + self.body_len - self.body_bytes_written).min(buf.len());
         // Read bytes from body
-        let range = self.bytes_read..upper_bound;
+        let range = self.bytes_written..upper_bound;
         let inner_poll_result = Pin::new(&mut self.res).poll_read(cx, &mut buf[range]);
-        let new_body_bytes_read = match inner_poll_result {
+        let new_body_bytes_written = match inner_poll_result {
             Poll::Ready(Ok(n)) => n,
             Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-            Poll::Pending => match self.bytes_read {
+            Poll::Pending => match self.bytes_written {
                 0 => return Poll::Pending,
                 n => return Poll::Ready(Ok(n)),
             },
         };
-        self.body_bytes_read += new_body_bytes_read;
-        self.bytes_read += new_body_bytes_read;
+        self.body_bytes_written += new_body_bytes_written;
+        self.bytes_written += new_body_bytes_written;
 
         // Double check we did not read more body bytes than the total
         // length of the body
         debug_assert!(
-            self.body_bytes_read <= self.body_len,
+            self.body_bytes_written <= self.body_len,
             "Too many bytes read. Expected: {}, read: {}",
             self.body_len,
-            self.body_bytes_read
+            self.body_bytes_written
         );
 
-        if self.body_len == self.body_bytes_read {
+        if self.body_len == self.body_bytes_written {
             // If we've read the `len` number of bytes, end
             self.set_state(State::End);
-            return Poll::Ready(Ok(self.bytes_read));
-        } else if new_body_bytes_read == 0 {
+            return Poll::Ready(Ok(self.bytes_written));
+        } else if new_body_bytes_written == 0 {
             // If we've reached unexpected EOF, end anyway
             // TODO: do something?
             self.set_state(State::End);
-            return Poll::Ready(Ok(self.bytes_read));
+            return Poll::Ready(Ok(self.bytes_written));
         } else {
             self.encode_fixed_body(cx, buf)
         }
@@ -236,19 +237,19 @@ impl Encoder {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        let buf = &mut buf[self.bytes_read..];
+        let buf = &mut buf[self.bytes_written..];
         match self.chunked.encode(&mut self.res, cx, buf) {
             Poll::Ready(Ok(read)) => {
-                self.bytes_read += read;
-                if self.bytes_read == 0 {
+                self.bytes_written += read;
+                if self.bytes_written == 0 {
                     self.set_state(State::End);
                 }
-                Poll::Ready(Ok(self.bytes_read))
+                Poll::Ready(Ok(self.bytes_written))
             }
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Pending => {
-                if self.bytes_read > 0 {
-                    return Poll::Ready(Ok(self.bytes_read));
+                if self.bytes_written > 0 {
+                    return Poll::Ready(Ok(self.bytes_written));
                 }
                 Poll::Pending
             }
