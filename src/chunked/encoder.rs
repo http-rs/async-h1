@@ -12,8 +12,8 @@ const CRLF_LEN: usize = 2;
 /// The encoder state.
 #[derive(Debug)]
 enum State {
-    /// Starting state.
-    Start,
+    /// Initing state.
+    Init,
     /// Streaming out chunks.
     EncodeChunks,
     /// No more chunks to stream, mark the end.
@@ -41,7 +41,7 @@ impl ChunkedEncoder {
     /// Create a new instance.
     pub(crate) fn new() -> Self {
         Self {
-            state: State::Start,
+            state: State::Init,
             bytes_written: 0,
         }
     }
@@ -72,15 +72,18 @@ impl ChunkedEncoder {
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         self.bytes_written = 0;
-        match self.state {
-            State::Start => self.init(res, cx, buf),
+        let res = match self.state {
+            State::Init => self.init(res, cx, buf),
             State::EncodeChunks => self.encode_chunks(res, cx, buf),
             State::EndOfChunks => self.encode_chunks_eos(res, cx, buf),
             State::ReceiveTrailers => self.encode_trailers(res, cx, buf),
             State::EncodeTrailers => self.encode_trailers(res, cx, buf),
             State::EndOfStream => self.encode_eos(cx, buf),
-            State::End => Poll::Ready(Ok(0)),
-        }
+            State::End => Poll::Ready(Ok(self.bytes_written)),
+        };
+
+        log::trace!("ChunkedEncoder {} bytes written", self.bytes_written);
+        res
     }
 
     /// Switch the internal state to a new state.
@@ -90,7 +93,7 @@ impl ChunkedEncoder {
 
         #[cfg(debug_assertions)]
         match self.state {
-            Start => assert!(matches!(state, EncodeChunks)),
+            Init => assert!(matches!(state, EncodeChunks)),
             EncodeChunks => assert!(matches!(state, EndOfChunks)),
             EndOfChunks => assert!(matches!(state, ReceiveTrailers)),
             ReceiveTrailers => assert!(matches!(state, EncodeTrailers | EndOfStream)),
@@ -180,7 +183,6 @@ impl ChunkedEncoder {
         self.bytes_written += CRLF_LEN;
 
         // Finally return how many bytes we've written to the buffer.
-        log::trace!("sending {} bytes", self.bytes_written);
         Poll::Ready(Ok(self.bytes_written))
     }
 

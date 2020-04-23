@@ -73,7 +73,7 @@ where
 
         // Pass the request to the endpoint and encode the response.
         let res = endpoint(req).await?;
-        let mut encoder = Encoder::encode(res);
+        let mut encoder = Encoder::new(res);
 
         // Stream the response to the writer.
         io::copy(&mut encoder, &mut io).await?;

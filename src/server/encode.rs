@@ -18,7 +18,7 @@ pub(crate) struct Encoder {
     /// HTTP headers to be sent.
     res: Response,
     /// The state of the encoding process
-    state: EncoderState,
+    state: State,
     /// Track bytes read in a call to poll_read.
     bytes_read: usize,
     /// The data we're writing as part of the head section.
@@ -36,20 +36,21 @@ pub(crate) struct Encoder {
 }
 
 #[derive(Debug)]
-enum EncoderState {
-    Start,
-    Head,
+enum State {
+    Init,
+    ComputeHead,
+    EncodeHead,
     FixedBody,
     ChunkedBody,
-    Done,
+    End,
 }
 
 impl Encoder {
-    /// Create a new instance.
-    pub(crate) fn encode(res: Response) -> Self {
+    /// Create a new instance of Encoder.
+    pub(crate) fn new(res: Response) -> Self {
         Self {
             res,
-            state: EncoderState::Start,
+            state: State::Init,
             bytes_read: 0,
             head: vec![],
             head_bytes_read: 0,
@@ -58,14 +59,51 @@ impl Encoder {
             chunked: ChunkedEncoder::new(),
         }
     }
-}
 
-impl Encoder {
-    // Encode the headers to a buffer, the first time we poll.
-    fn encode_start(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
-        log::trace!("Server response encoding: start");
-        self.state = EncoderState::Head;
+    pub(crate) fn encode(
+        &mut self,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        self.bytes_read = 0;
+        let res = match self.state {
+            State::Init => self.init(cx, buf),
+            State::ComputeHead => self.compute_head(cx, buf),
+            State::EncodeHead => self.encode_head(cx, buf),
+            State::FixedBody => self.encode_fixed_body(cx, buf),
+            State::ChunkedBody => self.encode_chunked_body(cx, buf),
+            State::End => Poll::Ready(Ok(self.bytes_read)),
+        };
+        log::trace!("ServerEncoder {} bytes written", self.bytes_read);
+        res
+    }
 
+    /// Switch the internal state to a new state.
+    fn set_state(&mut self, state: State) {
+        use State::*;
+        log::trace!("Server Encoder state: {:?} -> {:?}", self.state, state);
+
+        #[cfg(debug_assertions)]
+        match self.state {
+            Init => assert!(matches!(state, ComputeHead)),
+            ComputeHead => assert!(matches!(state, EncodeHead)),
+            EncodeHead => assert!(matches!(state, ChunkedBody | FixedBody)),
+            FixedBody => assert!(matches!(state, End)),
+            ChunkedBody => assert!(matches!(state, End)),
+            End => panic!("No state transitions allowed after the stream has ended"),
+        }
+
+        self.state = state;
+    }
+
+    /// Initialize to the first state.
+    fn init(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+        self.set_state(State::ComputeHead);
+        self.compute_head(cx, buf)
+    }
+
+    /// Encode the headers to a buffer, the first time we poll.
+    fn compute_head(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
         let reason = self.res.status().canonical_reason();
         let status = self.res.status();
         std::io::Write::write_fmt(
@@ -97,6 +135,8 @@ impl Encoder {
         }
 
         std::io::Write::write_fmt(&mut self.head, format_args!("\r\n"))?;
+
+        self.set_state(State::EncodeHead);
         self.encode_head(cx, buf)
     }
 
@@ -118,12 +158,12 @@ impl Encoder {
             match self.res.len() {
                 Some(body_len) => {
                     self.body_len = body_len;
-                    self.state = EncoderState::FixedBody;
+                    self.state = State::FixedBody;
                     log::trace!("Server response encoding: fixed length body");
                     return self.encode_fixed_body(cx, buf);
                 }
                 None => {
-                    self.state = EncoderState::ChunkedBody;
+                    self.state = State::ChunkedBody;
                     log::trace!("Server response encoding: chunked body");
                     return self.encode_chunked_body(cx, buf);
                 }
@@ -177,12 +217,12 @@ impl Encoder {
 
         if self.body_len == self.body_bytes_read {
             // If we've read the `len` number of bytes, end
-            self.state = EncoderState::Done;
+            self.set_state(State::End);
             return Poll::Ready(Ok(self.bytes_read));
         } else if new_body_bytes_read == 0 {
             // If we've reached unexpected EOF, end anyway
             // TODO: do something?
-            self.state = EncoderState::Done;
+            self.set_state(State::End);
             return Poll::Ready(Ok(self.bytes_read));
         } else {
             self.encode_fixed_body(cx, buf)
@@ -201,7 +241,7 @@ impl Encoder {
             Poll::Ready(Ok(read)) => {
                 self.bytes_read += read;
                 if self.bytes_read == 0 {
-                    self.state = EncoderState::Done
+                    self.set_state(State::End);
                 }
                 Poll::Ready(Ok(self.bytes_read))
             }
@@ -222,17 +262,6 @@ impl Read for Encoder {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        // we keep track how many bytes of the head and body we've read
-        // in this call of `poll_read`
-        self.bytes_read = 0;
-        let res = match self.state {
-            EncoderState::Start => self.encode_start(cx, buf),
-            EncoderState::Head => self.encode_head(cx, buf),
-            EncoderState::FixedBody => self.encode_fixed_body(cx, buf),
-            EncoderState::ChunkedBody => self.encode_chunked_body(cx, buf),
-            EncoderState::Done => Poll::Ready(Ok(0)),
-        };
-        // dbg!(String::from_utf8(buf[..self.bytes_read].to_vec()).unwrap());
-        res
+        self.encode(cx, buf)
     }
 }
