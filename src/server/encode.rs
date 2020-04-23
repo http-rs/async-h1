@@ -37,11 +37,17 @@ pub(crate) struct Encoder {
 
 #[derive(Debug)]
 enum State {
+    /// Starting state.
     Init,
+    /// Write the HEAD section to an intermediate buffer.
     ComputeHead,
+    /// Stream out the HEAD section.
     EncodeHead,
-    FixedBody,
-    ChunkedBody,
+    /// Stream out a body whose length is known ahead of time.
+    EncodeFixedBody,
+    /// Stream out a body whose length is *not* know ahead of time.
+    EncodeChunkedBody,
+    /// Stream has ended.
     End,
 }
 
@@ -70,8 +76,8 @@ impl Encoder {
             State::Init => self.init(cx, buf),
             State::ComputeHead => self.compute_head(cx, buf),
             State::EncodeHead => self.encode_head(cx, buf),
-            State::FixedBody => self.encode_fixed_body(cx, buf),
-            State::ChunkedBody => self.encode_chunked_body(cx, buf),
+            State::EncodeFixedBody => self.encode_fixed_body(cx, buf),
+            State::EncodeChunkedBody => self.encode_chunked_body(cx, buf),
             State::End => Poll::Ready(Ok(self.bytes_written)),
         };
         log::trace!("ServerEncoder {} bytes written", self.bytes_written);
@@ -87,9 +93,9 @@ impl Encoder {
         match self.state {
             Init => assert!(matches!(state, ComputeHead)),
             ComputeHead => assert!(matches!(state, EncodeHead)),
-            EncodeHead => assert!(matches!(state, ChunkedBody | FixedBody)),
-            FixedBody => assert!(matches!(state, End)),
-            ChunkedBody => assert!(matches!(state, End)),
+            EncodeHead => assert!(matches!(state, EncodeChunkedBody | EncodeFixedBody)),
+            EncodeFixedBody => assert!(matches!(state, End)),
+            EncodeChunkedBody => assert!(matches!(state, End)),
             End => panic!("No state transitions allowed after the stream has ended"),
         }
 
@@ -158,12 +164,12 @@ impl Encoder {
             match self.res.len() {
                 Some(body_len) => {
                     self.body_len = body_len;
-                    self.state = State::FixedBody;
+                    self.state = State::EncodeFixedBody;
                     log::trace!("Server response encoding: fixed length body");
                     return self.encode_fixed_body(cx, buf);
                 }
                 None => {
-                    self.state = State::ChunkedBody;
+                    self.state = State::EncodeChunkedBody;
                     log::trace!("Server response encoding: chunked body");
                     return self.encode_chunked_body(cx, buf);
                 }

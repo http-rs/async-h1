@@ -12,7 +12,7 @@ const CRLF_LEN: usize = 2;
 /// The encoder state.
 #[derive(Debug)]
 enum State {
-    /// Initing state.
+    /// Starting state.
     Init,
     /// Streaming out chunks.
     EncodeChunks,
