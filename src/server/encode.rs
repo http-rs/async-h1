@@ -60,7 +60,7 @@ impl Read for Encoder {
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         self.bytes_written = 0;
-        let res = self.dispatch(cx, buf);
+        let res = self.run(cx, buf);
         log::trace!("ServerEncoder {} bytes written", self.bytes_written);
         res
     }
@@ -83,7 +83,7 @@ impl Encoder {
     }
 
     /// Switch the internal state to a new state.
-    fn set_state(
+    fn dispatch(
         &mut self,
         state: State,
         cx: &mut Context<'_>,
@@ -103,13 +103,13 @@ impl Encoder {
         }
 
         self.state = state;
-        self.dispatch(cx, buf)
+        self.run(cx, buf)
     }
 
     /// Execute the right method for the current state.
-    fn dispatch(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+    fn run(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
         match self.state {
-            State::Start => self.set_state(State::ComputeHead, cx, buf),
+            State::Start => self.dispatch(State::ComputeHead, cx, buf),
             State::ComputeHead => self.compute_head(cx, buf),
             State::EncodeHead => self.encode_head(cx, buf),
             State::EncodeFixedBody => self.encode_fixed_body(cx, buf),
@@ -152,7 +152,7 @@ impl Encoder {
 
         std::io::Write::write_fmt(&mut self.head, format_args!("\r\n"))?;
 
-        self.set_state(State::EncodeHead, cx, buf)
+        self.dispatch(State::EncodeHead, cx, buf)
     }
 
     /// Encode the status code + headers.
@@ -173,9 +173,9 @@ impl Encoder {
             match self.res.len() {
                 Some(body_len) => {
                     self.body_len = body_len;
-                    self.set_state(State::EncodeFixedBody, cx, buf)
+                    self.dispatch(State::EncodeFixedBody, cx, buf)
                 }
-                None => self.set_state(State::EncodeChunkedBody, cx, buf),
+                None => self.dispatch(State::EncodeChunkedBody, cx, buf),
             }
         } else {
             // If we haven't read the entire header it means `buf` isn't
@@ -227,11 +227,11 @@ impl Encoder {
 
         if self.body_len == self.body_bytes_written {
             // If we've read the `len` number of bytes, end
-            self.set_state(State::End, cx, buf)
+            self.dispatch(State::End, cx, buf)
         } else if new_body_bytes_written == 0 {
             // If we've reached unexpected EOF, end anyway
             // TODO: do something?
-            self.set_state(State::End, cx, buf)
+            self.dispatch(State::End, cx, buf)
         } else {
             // Else continue encoding
             self.encode_fixed_body(cx, buf)
@@ -250,7 +250,7 @@ impl Encoder {
             Poll::Ready(Ok(read)) => {
                 self.bytes_written += read;
                 match self.bytes_written {
-                    0 => self.set_state(State::End, cx, buf),
+                    0 => self.dispatch(State::End, cx, buf),
                     _ => Poll::Ready(Ok(self.bytes_written)),
                 }
             }

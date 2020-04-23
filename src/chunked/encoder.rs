@@ -72,20 +72,20 @@ impl ChunkedEncoder {
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         self.bytes_written = 0;
-        let res = self.dispatch(res, cx, buf);
+        let res = self.run(res, cx, buf);
         log::trace!("ChunkedEncoder {} bytes written", self.bytes_written);
         res
     }
 
     /// Execute the right method for the current state.
-    fn dispatch(
+    fn run(
         &mut self,
         res: &mut Response,
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         match self.state {
-            State::Start => self.set_state(State::EncodeChunks, res, cx, buf),
+            State::Start => self.dispatch(State::EncodeChunks, res, cx, buf),
             State::EncodeChunks => self.encode_chunks(res, cx, buf),
             State::EndOfChunks => self.encode_chunks_eos(res, cx, buf),
             State::ReceiveTrailers => self.receive_trailers(res, cx, buf),
@@ -96,7 +96,7 @@ impl ChunkedEncoder {
     }
 
     /// Switch the internal state to a new state.
-    fn set_state(
+    fn dispatch(
         &mut self,
         state: State,
         res: &mut Response,
@@ -118,7 +118,7 @@ impl ChunkedEncoder {
         }
 
         self.state = state;
-        self.dispatch(res, cx, buf)
+        self.run(res, cx, buf)
     }
 
     /// Stream out data using chunked encoding.
@@ -142,7 +142,7 @@ impl ChunkedEncoder {
         // If the stream doesn't have any more bytes left to read we're done
         // sending chunks and it's time to move on.
         if src.len() == 0 {
-            return self.set_state(State::EndOfChunks, res, cx, buf);
+            return self.dispatch(State::EndOfChunks, res, cx, buf);
         }
 
         // Each chunk is prefixed with the length of the data in hex, then a
@@ -209,7 +209,7 @@ impl ChunkedEncoder {
         buf[idx + 2] = LF;
         self.bytes_written += 1 + CRLF_LEN;
 
-        self.set_state(State::ReceiveTrailers, res, cx, buf)
+        self.dispatch(State::ReceiveTrailers, res, cx, buf)
     }
 
     /// Receive trailers sent to the response, and store them in an internal
@@ -221,7 +221,7 @@ impl ChunkedEncoder {
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         // TODO: actually wait for trailers to be received.
-        self.set_state(State::EncodeTrailers, res, cx, buf)
+        self.dispatch(State::EncodeTrailers, res, cx, buf)
     }
 
     /// Send trailers to the buffer.
@@ -232,7 +232,7 @@ impl ChunkedEncoder {
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         // TODO: actually encode trailers here.
-        self.set_state(State::EndOfStream, res, cx, buf)
+        self.dispatch(State::EndOfStream, res, cx, buf)
     }
 
     /// Encode the end of the stream.
@@ -247,6 +247,6 @@ impl ChunkedEncoder {
         buf[idx] = CR;
         buf[idx + 1] = LF;
         self.bytes_written += CRLF_LEN;
-        self.set_state(State::End, res, cx, buf)
+        self.dispatch(State::End, res, cx, buf)
     }
 }
