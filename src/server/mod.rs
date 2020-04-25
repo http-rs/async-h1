@@ -3,9 +3,9 @@
 use std::time::Duration;
 
 use async_std::future::{timeout, Future, TimeoutError};
-use async_std::io::{self};
-use async_std::io::{Read, Write};
+use async_std::io::{self, Read, Write};
 use http_types::{Request, Response};
+use url::Url;
 
 mod decode;
 mod encode;
@@ -31,7 +31,7 @@ impl Default for ServerOptions {
 /// Accept a new incoming HTTP/1.1 connection.
 ///
 /// Supports `KeepAlive` requests by default.
-pub async fn accept<RW, F, Fut>(addr: &str, io: RW, endpoint: F) -> http_types::Result<()>
+pub async fn accept<RW, F, Fut>(addr: &Url, io: RW, endpoint: F) -> http_types::Result<()>
 where
     RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
     F: Fn(Request) -> Fut,
@@ -44,7 +44,7 @@ where
 ///
 /// Supports `KeepAlive` requests by default.
 pub async fn accept_with_opts<RW, F, Fut>(
-    addr: &str,
+    addr: &Url,
     mut io: RW,
     endpoint: F,
     opts: ServerOptions,

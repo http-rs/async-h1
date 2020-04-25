@@ -8,6 +8,7 @@ use async_std::prelude::*;
 use http_types::headers::{HeaderName, HeaderValue, CONTENT_LENGTH, TRANSFER_ENCODING};
 use http_types::{ensure, ensure_eq, format_err};
 use http_types::{Body, Method, Request};
+use url::Url;
 
 use crate::chunked::ChunkedDecoder;
 use crate::{MAX_HEADERS, MAX_HEAD_LENGTH};
@@ -18,7 +19,7 @@ const LF: u8 = b'\n';
 const HTTP_1_1_VERSION: u8 = 1;
 
 /// Decode an HTTP request on the server.
-pub(crate) async fn decode<R>(addr: &str, reader: R) -> http_types::Result<Option<Request>>
+pub(crate) async fn decode<R>(addr: &Url, reader: R) -> http_types::Result<Option<Request>>
 where
     R: Read + Unpin + Send + Sync + 'static,
 {
@@ -59,7 +60,7 @@ where
 
     let uri = httparse_req.path;
     let uri = uri.ok_or_else(|| format_err!("No uri found"))?;
-    let uri = url::Url::parse(&format!("{}{}", addr, uri))?;
+    let uri = addr.join(uri)?;
 
     let version = httparse_req.version;
     let version = version.ok_or_else(|| format_err!("No version found"))?;

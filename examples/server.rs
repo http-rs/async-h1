@@ -2,12 +2,13 @@ use async_std::net::{TcpListener, TcpStream};
 use async_std::prelude::*;
 use async_std::task;
 use http_types::{Response, StatusCode};
+use url::Url;
 
 #[async_std::main]
 async fn main() -> http_types::Result<()> {
     // Open up a TCP connection and create a URL.
     let listener = TcpListener::bind(("127.0.0.1", 8080)).await?;
-    let addr = format!("http://{}", listener.local_addr()?);
+    let addr = Url::parse(&format!("http://{}", listener.local_addr()?))?;
     println!("listening on {}", addr);
 
     // For each incoming TCP connection, spawn a task and call `accept`.
@@ -25,7 +26,7 @@ async fn main() -> http_types::Result<()> {
 }
 
 // Take a TCP stream, and convert it into sequential HTTP request / response pairs.
-async fn accept(addr: String, stream: TcpStream) -> http_types::Result<()> {
+async fn accept(addr: Url, stream: TcpStream) -> http_types::Result<()> {
     println!("starting new connection from {}", stream.peer_addr()?);
     async_h1::accept(&addr, stream.clone(), |_req| async move {
         let mut res = Response::new(StatusCode::Ok);

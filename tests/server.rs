@@ -12,9 +12,9 @@ async fn test_basic_request() {
         "fixtures/response-add-date.txt",
     )
     .await;
-    let addr = "http://example.com";
+    let addr = "http://example.com".parse().unwrap();
 
-    async_h1::accept(addr, case.clone(), |_req| async {
+    async_h1::accept(&addr, case.clone(), |_req| async {
         let mut res = Response::new(StatusCode::Ok);
         res.set_body("");
         Ok(res)
@@ -32,9 +32,9 @@ async fn test_chunked_basic() {
         "fixtures/response-chunked-basic.txt",
     )
     .await;
-    let addr = "http://example.com";
+    let addr = "http://example.com".parse().unwrap();
 
-    async_h1::accept(addr, case.clone(), |_req| async {
+    async_h1::accept(&addr, case.clone(), |_req| async {
         let mut res = Response::new(StatusCode::Ok);
         res.set_body(Body::from_reader(
             Cursor::new(b"Mozilla")
@@ -59,8 +59,8 @@ async fn test_chunked_echo() {
     )
     .await;
 
-    let addr = "http://example.com";
-    async_h1::accept(addr, case.clone(), |req| async {
+    let addr = "http://example.com".parse().unwrap();
+    async_h1::accept(&addr, case.clone(), |req| async {
         let ct = req.content_type();
         let body: Body = req.into();
 
@@ -86,9 +86,9 @@ async fn test_unexpected_eof() {
         "fixtures/response-unexpected-eof.txt",
     )
     .await;
-    let addr = "http://example.com";
+    let addr = "http://example.com".parse().unwrap();
 
-    async_h1::accept(addr, case.clone(), |req| async {
+    async_h1::accept(&addr, case.clone(), |req| async {
         let mut res = Response::new(StatusCode::Ok);
         let ct = req.content_type();
         let body: Body = req.into();
@@ -112,9 +112,9 @@ async fn test_invalid_trailer() {
         "fixtures/response-invalid-trailer.txt",
     )
     .await;
-    let addr = "http://example.com";
+    let addr = "http://example.com".parse().unwrap();
 
-    async_h1::accept(addr, case.clone(), |req| async {
+    async_h1::accept(&addr, case.clone(), |req| async {
         let mut res = Response::new(StatusCode::Ok);
         let ct = req.content_type();
         let body: Body = req.into();

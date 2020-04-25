@@ -60,7 +60,7 @@
 //! async fn main() -> http_types::Result<()> {
 //!     // Open up a TCP connection and create a URL.
 //!     let listener = TcpListener::bind(("127.0.0.1", 8080)).await?;
-//!     let addr = format!("http://{}", listener.local_addr()?);
+//!     let addr: url::Url = format!("http://{}", listener.local_addr()?).parse()?;
 //!     println!("listening on {}", addr);
 //!
 //!     // For each incoming TCP connection, spawn a task and call `accept`.
@@ -68,8 +68,8 @@
 //!     while let Some(stream) = incoming.next().await {
 //!         let stream = stream?;
 //!         let addr = addr.clone();
-//!         task::spawn(async {
-//!             if let Err(err) = accept(addr, stream).await {
+//!         task::spawn(async move {
+//!             if let Err(err) = accept(&addr, stream).await {
 //!                 eprintln!("{}", err);
 //!             }
 //!         });
@@ -78,7 +78,7 @@
 //! }
 //!
 //! // Take a TCP stream, and convert it into sequential HTTP request / response pairs.
-//! async fn accept(addr: String, stream: TcpStream) -> http_types::Result<()> {
+//! async fn accept(addr: &url::Url, stream: TcpStream) -> http_types::Result<()> {
 //!     println!("starting new connection from {}", stream.peer_addr()?);
 //!     async_h1::accept(&addr, stream.clone(), |_req| async move {
 //!         let mut res = Response::new(StatusCode::Ok);
