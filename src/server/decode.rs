@@ -4,7 +4,7 @@ use std::str::FromStr;
 
 use async_std::io::{BufReader, Read, Write};
 use async_std::prelude::*;
-use http_types::headers::{HeaderName, HeaderValue, CONTENT_LENGTH, HOST, TRANSFER_ENCODING};
+use http_types::headers::{CONTENT_LENGTH, HOST, TRANSFER_ENCODING};
 use http_types::{ensure, ensure_eq, format_err};
 use http_types::{Body, Method, Request};
 
@@ -75,16 +75,14 @@ where
     );
 
     for header in httparse_req.headers.iter() {
-        let name = HeaderName::from_str(header.name)?;
-        let value = HeaderValue::from_str(std::str::from_utf8(header.value)?)?;
-        req.insert_header(name, value)?;
+        req.insert_header(header.name, std::str::from_utf8(header.value)?);
     }
 
     set_url_and_port_from_host_header(&mut req)?;
     handle_100_continue(&req, &mut io).await?;
 
-    let content_length = req.header(&CONTENT_LENGTH);
-    let transfer_encoding = req.header(&TRANSFER_ENCODING);
+    let content_length = req.header(CONTENT_LENGTH);
+    let transfer_encoding = req.header(TRANSFER_ENCODING);
 
     http_types::ensure!(
         content_length.is_none() || transfer_encoding.is_none(),
@@ -93,7 +91,7 @@ where
 
     // Check for Transfer-Encoding
     if let Some(encoding) = transfer_encoding {
-        if !encoding.is_empty() && encoding.last().unwrap().as_str() == "chunked" {
+        if encoding.last().as_str() == "chunked" {
             let trailer_sender = req.send_trailers();
             let reader = BufReader::new(ChunkedDecoder::new(reader, trailer_sender));
             req.set_body(Body::from_reader(reader, None));
@@ -104,7 +102,7 @@ where
 
     // Check for Content-Length.
     if let Some(len) = content_length {
-        let len = len.last().unwrap().as_str().parse::<usize>()?;
+        let len = len.last().as_str().parse::<usize>()?;
         req.set_body(Body::from_reader(reader.take(len as u64), Some(len)));
     }
 
@@ -113,11 +111,11 @@ where
 
 fn set_url_and_port_from_host_header(req: &mut Request) -> http_types::Result<()> {
     let host = req
-        .header(&HOST)
-        .and_then(|header| header.last()) // There must only exactly one Host header, so this is permissive
-        .ok_or_else(|| format_err!("Mandatory Host header missing"))?; //  https://tools.ietf.org/html/rfc7230#section-5.4
+        .header(HOST)
+        .map(|header| header.last()) // There must only exactly one Host header, so this is permissive
+        .ok_or_else(|| format_err!("Mandatory Host header missing"))? //  https://tools.ietf.org/html/rfc7230#section-5.4
+        .to_string();
 
-    let host = host.to_string();
     if let Some(colon) = host.find(":") {
         req.url_mut().set_host(Some(&host[0..colon]))?;
         req.url_mut()
@@ -134,10 +132,7 @@ async fn handle_100_continue<IO: Write + Unpin>(
     req: &Request,
     io: &mut IO,
 ) -> http_types::Result<()> {
-    let expect_header_value = req
-        .header(&HeaderName::from_str("expect").unwrap())
-        .and_then(|v| v.last())
-        .map(|v| v.as_str());
+    let expect_header_value = req.header("expect").map(|v| v.as_str());
 
     if let Some("100-continue") = expect_header_value {
         io.write_all("HTTP/1.1 100 Continue\r\n".as_bytes()).await?;
@@ -255,7 +250,7 @@ mod tests {
                 .unwrap(),
         );
 
-        req.insert_header(HOST, host).unwrap();
+        req.insert_header(HOST, host);
 
         req
     }

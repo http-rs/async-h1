@@ -5,7 +5,10 @@ use std::pin::Pin;
 use async_std::io;
 use async_std::io::prelude::*;
 use async_std::task::{Context, Poll};
-use http_types::Response;
+use http_types::{
+    headers::{CONTENT_LENGTH, DATE, TRANSFER_ENCODING},
+    Response,
+};
 
 use crate::chunked::ChunkedEncoder;
 use crate::date::fmt_http_date;
@@ -138,7 +141,7 @@ impl Encoder {
             )?;
         }
 
-        if self.res.header(&http_types::headers::DATE).is_none() {
+        if self.res.header(DATE).is_none() {
             let date = fmt_http_date(std::time::SystemTime::now());
             std::io::Write::write_fmt(&mut self.head, format_args!("date: {}\r\n", date))?;
         }
@@ -146,8 +149,8 @@ impl Encoder {
         let iter = self
             .res
             .iter()
-            .filter(|(h, _)| h != &&http_types::headers::CONTENT_LENGTH)
-            .filter(|(h, _)| h != &&http_types::headers::TRANSFER_ENCODING);
+            .filter(|(h, _)| h != &&CONTENT_LENGTH)
+            .filter(|(h, _)| h != &&TRANSFER_ENCODING);
         for (header, values) in iter {
             for value in values.iter() {
                 std::io::Write::write_fmt(
