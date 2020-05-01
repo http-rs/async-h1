@@ -26,6 +26,26 @@ async fn test_basic_request() {
 }
 
 #[async_std::test]
+async fn test_host() {
+    let case = TestCase::new_server(
+        "fixtures/request-with-host.txt",
+        "fixtures/response-with-host.txt",
+    )
+    .await;
+    let addr = "http://127.0.0.1:8000";
+
+    async_h1::accept(addr, case.clone(), |req| async move {
+        let mut res = Response::new(StatusCode::Ok);
+        res.set_body(req.url().as_str());
+        Ok(res)
+    })
+    .await
+    .unwrap();
+
+    case.assert().await;
+}
+
+#[async_std::test]
 async fn test_chunked_basic() {
     let case = TestCase::new_server(
         "fixtures/request-chunked-basic.txt",

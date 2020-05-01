@@ -5,7 +5,7 @@ use std::str::FromStr;
 use async_std::io::BufReader;
 use async_std::io::Read;
 use async_std::prelude::*;
-use http_types::headers::{HeaderName, HeaderValue, CONTENT_LENGTH, TRANSFER_ENCODING};
+use http_types::headers::{HeaderName, HeaderValue, CONTENT_LENGTH, HOST, TRANSFER_ENCODING};
 use http_types::{ensure, ensure_eq, format_err};
 use http_types::{Body, Method, Request};
 
@@ -57,9 +57,9 @@ where
     let method = httparse_req.method;
     let method = method.ok_or_else(|| format_err!("No method found"))?;
 
-    let uri = httparse_req.path;
-    let uri = uri.ok_or_else(|| format_err!("No uri found"))?;
-    let uri = url::Url::parse(&format!("{}{}", addr, uri))?;
+    let path = httparse_req.path;
+    let path = path.ok_or_else(|| format_err!("No uri found"))?;
+    let uri = url::Url::parse(&format!("{}{}", addr, path))?;
 
     let version = httparse_req.version;
     let version = version.ok_or_else(|| format_err!("No version found"))?;
@@ -70,6 +70,12 @@ where
         let name = HeaderName::from_str(header.name)?;
         let value = HeaderValue::from_str(std::str::from_utf8(header.value)?)?;
         req.insert_header(name, value)?;
+    }
+
+    if let Some(host) = req.header(&HOST).cloned() {
+        if let Some(host) = host.last() {
+            *req.url_mut() = url::Url::parse(&format!("http://{}{}", host, path))?;
+        }
     }
 
     let content_length = req.header(&CONTENT_LENGTH);
