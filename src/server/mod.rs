@@ -31,20 +31,19 @@ impl Default for ServerOptions {
 /// Accept a new incoming HTTP/1.1 connection.
 ///
 /// Supports `KeepAlive` requests by default.
-pub async fn accept<RW, F, Fut>(addr: &str, io: RW, endpoint: F) -> http_types::Result<()>
+pub async fn accept<RW, F, Fut>(io: RW, endpoint: F) -> http_types::Result<()>
 where
     RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
     F: Fn(Request) -> Fut,
     Fut: Future<Output = http_types::Result<Response>>,
 {
-    accept_with_opts(addr, io, endpoint, Default::default()).await
+    accept_with_opts(io, endpoint, Default::default()).await
 }
 
 /// Accept a new incoming HTTP/1.1 connection.
 ///
 /// Supports `KeepAlive` requests by default.
 pub async fn accept_with_opts<RW, F, Fut>(
-    addr: &str,
     mut io: RW,
     endpoint: F,
     opts: ServerOptions,
@@ -56,7 +55,7 @@ where
 {
     loop {
         // Decode a new request, timing out if this takes longer than the timeout duration.
-        let fut = decode(addr, io.clone());
+        let fut = decode(io.clone());
 
         let req = if let Some(timeout_duration) = opts.headers_timeout {
             match timeout(timeout_duration, fut).await {

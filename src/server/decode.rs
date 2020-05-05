@@ -18,7 +18,7 @@ const LF: u8 = b'\n';
 const HTTP_1_1_VERSION: u8 = 1;
 
 /// Decode an HTTP request on the server.
-pub(crate) async fn decode<R>(addr: &str, reader: R) -> http_types::Result<Option<Request>>
+pub(crate) async fn decode<R>(reader: R) -> http_types::Result<Option<Request>>
 where
     R: Read + Unpin + Send + Sync + 'static,
 {
@@ -59,24 +59,25 @@ where
 
     let path = httparse_req.path;
     let path = path.ok_or_else(|| format_err!("No uri found"))?;
-    let uri = url::Url::parse(&format!("{}{}", addr, path))?;
 
     let version = httparse_req.version;
     let version = version.ok_or_else(|| format_err!("No version found"))?;
     ensure_eq!(version, HTTP_1_1_VERSION, "Unsupported HTTP version");
 
-    let mut req = Request::new(Method::from_str(method)?, uri);
+    let mut req = Request::new(Method::from_str(method)?, url::Url::parse("x:").unwrap());
+
     for header in httparse_req.headers.iter() {
         let name = HeaderName::from_str(header.name)?;
         let value = HeaderValue::from_str(std::str::from_utf8(header.value)?)?;
         req.insert_header(name, value)?;
     }
 
-    if let Some(host) = req.header(&HOST).cloned() {
-        if let Some(host) = host.last() {
-            *req.url_mut() = url::Url::parse(&format!("http://{}{}", host, path))?;
-        }
-    }
+    let host = req
+        .header(&HOST)
+        .and_then(|header| header.last())
+        .ok_or_else(|| format_err!("Mandatory host header missing"))?;
+
+    *req.url_mut() = url::Url::parse(&format!("http://{}", host.as_str()))?.join(path)?;
 
     let content_length = req.header(&CONTENT_LENGTH);
     let transfer_encoding = req.header(&TRANSFER_ENCODING);

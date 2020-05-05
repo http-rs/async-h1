@@ -145,7 +145,7 @@ const RESPONSE: &'static str = concat![
 #[async_std::test]
 async fn server_chunked_large() {
     let case = TestCase::new(REQUEST, "").await;
-    async_h1::accept("http://example.com", case.clone(), |_| async {
+    async_h1::accept(case.clone(), |_| async {
         let mut res = Response::new(StatusCode::Ok);
         let body = Cursor::new(TEXT.to_owned());
         res.set_body(Body::from_reader(body, None));

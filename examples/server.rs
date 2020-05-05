@@ -14,9 +14,8 @@ async fn main() -> http_types::Result<()> {
     let mut incoming = listener.incoming();
     while let Some(stream) = incoming.next().await {
         let stream = stream?;
-        let addr = addr.clone();
         task::spawn(async {
-            if let Err(err) = accept(addr, stream).await {
+            if let Err(err) = accept(stream).await {
                 eprintln!("{}", err);
             }
         });
@@ -25,9 +24,9 @@ async fn main() -> http_types::Result<()> {
 }
 
 // Take a TCP stream, and convert it into sequential HTTP request / response pairs.
-async fn accept(addr: String, stream: TcpStream) -> http_types::Result<()> {
+async fn accept(stream: TcpStream) -> http_types::Result<()> {
     println!("starting new connection from {}", stream.peer_addr()?);
-    async_h1::accept(&addr, stream.clone(), |_req| async move {
+    async_h1::accept(stream.clone(), |_req| async move {
         let mut res = Response::new(StatusCode::Ok);
         res.insert_header("Content-Type", "text/plain")?;
         res.set_body("Hello world");
