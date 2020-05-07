@@ -64,7 +64,10 @@ where
     let version = version.ok_or_else(|| format_err!("No version found"))?;
     ensure_eq!(version, HTTP_1_1_VERSION, "Unsupported HTTP version");
 
-    let mut req = Request::new(Method::from_str(method)?, url::Url::parse("x:").unwrap());
+    let mut req = Request::new(
+        Method::from_str(method)?,
+        url::Url::parse("http://_").unwrap().join(path)?,
+    );
 
     for header in httparse_req.headers.iter() {
         let name = HeaderName::from_str(header.name)?;
@@ -72,12 +75,7 @@ where
         req.insert_header(name, value)?;
     }
 
-    let host = req
-        .header(&HOST)
-        .and_then(|header| header.last())
-        .ok_or_else(|| format_err!("Mandatory host header missing"))?;
-
-    *req.url_mut() = url::Url::parse(&format!("http://{}", host.as_str()))?.join(path)?;
+    set_url_and_port_from_host_header(&mut req)?;
 
     let content_length = req.header(&CONTENT_LENGTH);
     let transfer_encoding = req.header(&TRANSFER_ENCODING);
@@ -105,4 +103,104 @@ where
     }
 
     Ok(Some(req))
+}
+
+fn set_url_and_port_from_host_header(req: &mut Request) -> http_types::Result<()> {
+    let host = req
+        .header(&HOST)
+        .and_then(|header| header.last()) // There must only exactly one Host header, so this is permissive
+        .ok_or_else(|| format_err!("Mandatory Host header missing"))?; //  https://tools.ietf.org/html/rfc7230#section-5.4
+
+    let host = host.to_string();
+    if let Some(colon) = host.find(":") {
+        req.url_mut().set_host(Some(&host[0..colon]))?;
+        req.url_mut()
+            .set_port(host[colon + 1..].parse().ok())
+            .unwrap();
+    } else {
+        req.url_mut().set_host(Some(&host))?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request_with_host_header(host: &str) -> Request {
+        let mut req = Request::new(
+            Method::from_str("GET").unwrap(),
+            url::Url::parse("http://_")
+                .unwrap()
+                .join("/some/path")
+                .unwrap(),
+        );
+
+        req.insert_header(HOST, host).unwrap();
+
+        req
+    }
+
+    #[test]
+    fn test_setting_host_with_no_port() {
+        let mut request = request_with_host_header("subdomain.mydomain.tld");
+        set_url_and_port_from_host_header(&mut request).unwrap();
+        assert_eq!(
+            request.url(),
+            &url::Url::parse("http://subdomain.mydomain.tld/some/path").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_setting_host_with_a_port() {
+        let mut request = request_with_host_header("subdomain.mydomain.tld:8080");
+        set_url_and_port_from_host_header(&mut request).unwrap();
+        assert_eq!(
+            request.url(),
+            &url::Url::parse("http://subdomain.mydomain.tld:8080/some/path").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_setting_host_with_an_ip_and_port() {
+        let mut request = request_with_host_header("12.34.56.78:90");
+        set_url_and_port_from_host_header(&mut request).unwrap();
+        assert_eq!(
+            request.url(),
+            &url::Url::parse("http://12.34.56.78:90/some/path").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_malformed_nonnumeric_port_is_ignored() {
+        let mut request = request_with_host_header("hello.world:uh-oh");
+        set_url_and_port_from_host_header(&mut request).unwrap();
+        assert_eq!(
+            request.url(),
+            &url::Url::parse("http://hello.world/some/path").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_malformed_trailing_colon_is_ignored() {
+        let mut request = request_with_host_header("edge.cases:");
+        set_url_and_port_from_host_header(&mut request).unwrap();
+        assert_eq!(
+            request.url(),
+            &url::Url::parse("http://edge.cases/some/path").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_malformed_leading_colon_is_invalid_host_value() {
+        let mut request = request_with_host_header(":300");
+        assert!(set_url_and_port_from_host_header(&mut request).is_err());
+    }
+
+    #[test]
+    fn test_malformed_invalid_url_host_is_invalid_host_header_value() {
+        let mut request = request_with_host_header(" ");
+        assert!(set_url_and_port_from_host_header(&mut request).is_err());
+    }
 }
