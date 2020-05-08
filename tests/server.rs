@@ -12,11 +12,29 @@ async fn test_basic_request() {
         "fixtures/response-add-date.txt",
     )
     .await;
-    let addr = "http://example.com";
 
-    async_h1::accept(addr, case.clone(), |_req| async {
+    async_h1::accept(case.clone(), |_req| async {
         let mut res = Response::new(StatusCode::Ok);
         res.set_body("");
+        Ok(res)
+    })
+    .await
+    .unwrap();
+
+    case.assert().await;
+}
+
+#[async_std::test]
+async fn test_host() {
+    let case = TestCase::new_server(
+        "fixtures/request-with-host.txt",
+        "fixtures/response-with-host.txt",
+    )
+    .await;
+
+    async_h1::accept(case.clone(), |req| async move {
+        let mut res = Response::new(StatusCode::Ok);
+        res.set_body(req.url().as_str());
         Ok(res)
     })
     .await
@@ -32,9 +50,8 @@ async fn test_chunked_basic() {
         "fixtures/response-chunked-basic.txt",
     )
     .await;
-    let addr = "http://example.com";
 
-    async_h1::accept(addr, case.clone(), |_req| async {
+    async_h1::accept(case.clone(), |_req| async {
         let mut res = Response::new(StatusCode::Ok);
         res.set_body(Body::from_reader(
             Cursor::new(b"Mozilla")
@@ -59,8 +76,7 @@ async fn test_chunked_echo() {
     )
     .await;
 
-    let addr = "http://example.com";
-    async_h1::accept(addr, case.clone(), |req| async {
+    async_h1::accept(case.clone(), |req| async {
         let ct = req.content_type();
         let body: Body = req.into();
 
@@ -86,9 +102,8 @@ async fn test_unexpected_eof() {
         "fixtures/response-unexpected-eof.txt",
     )
     .await;
-    let addr = "http://example.com";
 
-    async_h1::accept(addr, case.clone(), |req| async {
+    async_h1::accept(case.clone(), |req| async {
         let mut res = Response::new(StatusCode::Ok);
         let ct = req.content_type();
         let body: Body = req.into();
@@ -112,9 +127,8 @@ async fn test_invalid_trailer() {
         "fixtures/response-invalid-trailer.txt",
     )
     .await;
-    let addr = "http://example.com";
 
-    async_h1::accept(addr, case.clone(), |req| async {
+    async_h1::accept(case.clone(), |req| async {
         let mut res = Response::new(StatusCode::Ok);
         let ct = req.content_type();
         let body: Body = req.into();
