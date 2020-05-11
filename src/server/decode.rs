@@ -62,7 +62,13 @@ where
 
     let version = httparse_req.version;
     let version = version.ok_or_else(|| format_err!("No version found"))?;
-    ensure_eq!(version, HTTP_1_1_VERSION, "Unsupported HTTP version");
+
+    ensure_eq!(
+        version,
+        HTTP_1_1_VERSION,
+        "Unsupported HTTP version 1.{}",
+        version
+    );
 
     let mut req = Request::new(
         Method::from_str(method)?,
