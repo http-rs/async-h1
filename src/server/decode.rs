@@ -2,8 +2,7 @@
 
 use std::str::FromStr;
 
-use async_std::io::BufReader;
-use async_std::io::Read;
+use async_std::io::{BufReader, Read, Write};
 use async_std::prelude::*;
 use http_types::headers::{HeaderName, HeaderValue, CONTENT_LENGTH, HOST, TRANSFER_ENCODING};
 use http_types::{ensure, ensure_eq, format_err};
@@ -18,11 +17,11 @@ const LF: u8 = b'\n';
 const HTTP_1_1_VERSION: u8 = 1;
 
 /// Decode an HTTP request on the server.
-pub(crate) async fn decode<R>(reader: R) -> http_types::Result<Option<Request>>
+pub(crate) async fn decode<IO>(mut io: IO) -> http_types::Result<Option<Request>>
 where
-    R: Read + Unpin + Send + Sync + 'static,
+    IO: Read + Write + Clone + Send + Sync + Unpin + 'static,
 {
-    let mut reader = BufReader::new(reader);
+    let mut reader = BufReader::new(io.clone());
     let mut buf = Vec::new();
     let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
     let mut httparse_req = httparse::Request::new(&mut headers);
@@ -82,6 +81,7 @@ where
     }
 
     set_url_and_port_from_host_header(&mut req)?;
+    handle_100_continue(&req, &mut io).await?;
 
     let content_length = req.header(&CONTENT_LENGTH);
     let transfer_encoding = req.header(&TRANSFER_ENCODING);
@@ -130,22 +130,58 @@ fn set_url_and_port_from_host_header(req: &mut Request) -> http_types::Result<()
     Ok(())
 }
 
+async fn handle_100_continue<IO: Write + Unpin>(
+    req: &Request,
+    io: &mut IO,
+) -> http_types::Result<()> {
+    let expect_header_value = req
+        .header(&HeaderName::from_str("expect").unwrap())
+        .and_then(|v| v.last())
+        .map(|v| v.as_str());
+
+    if let Some("100-continue") = expect_header_value {
+        io.write_all("HTTP/1.1 100 Continue\r\n".as_bytes()).await?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn request_with_host_header(host: &str) -> Request {
-        let mut req = Request::new(
-            Method::from_str("GET").unwrap(),
-            url::Url::parse("http://_")
-                .unwrap()
-                .join("/some/path")
-                .unwrap(),
+    #[test]
+    fn handle_100_continue_does_nothing_with_no_expect_header() {
+        let request = Request::new(Method::Get, url::Url::parse("x:").unwrap());
+        let mut io = async_std::io::Cursor::new(vec![]);
+        let result = async_std::task::block_on(handle_100_continue(&request, &mut io));
+        assert_eq!(std::str::from_utf8(&io.into_inner()).unwrap(), "");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn handle_100_continue_sends_header_if_expects_is_exactly_right() {
+        let mut request = Request::new(Method::Get, url::Url::parse("x:").unwrap());
+        request.append_header("expect", "100-continue").unwrap();
+        let mut io = async_std::io::Cursor::new(vec![]);
+        let result = async_std::task::block_on(handle_100_continue(&request, &mut io));
+        assert_eq!(
+            std::str::from_utf8(&io.into_inner()).unwrap(),
+            "HTTP/1.1 100 Continue\r\n"
         );
+        assert!(result.is_ok());
+    }
 
-        req.insert_header(HOST, host).unwrap();
-
-        req
+    #[test]
+    fn handle_100_continue_does_nothing_if_expects_header_is_wrong() {
+        let mut request = Request::new(Method::Get, url::Url::parse("x:").unwrap());
+        request
+            .append_header("expect", "110-extensions-not-allowed")
+            .unwrap();
+        let mut io = async_std::io::Cursor::new(vec![]);
+        let result = async_std::task::block_on(handle_100_continue(&request, &mut io));
+        assert_eq!(std::str::from_utf8(&io.into_inner()).unwrap(), "");
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -208,5 +244,19 @@ mod tests {
     fn test_malformed_invalid_url_host_is_invalid_host_header_value() {
         let mut request = request_with_host_header(" ");
         assert!(set_url_and_port_from_host_header(&mut request).is_err());
+    }
+
+    fn request_with_host_header(host: &str) -> Request {
+        let mut req = Request::new(
+            Method::Get,
+            url::Url::parse("http://_")
+                .unwrap()
+                .join("/some/path")
+                .unwrap(),
+        );
+
+        req.insert_header(HOST, host).unwrap();
+
+        req
     }
 }
