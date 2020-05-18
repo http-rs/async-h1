@@ -5,10 +5,8 @@ use std::pin::Pin;
 use async_std::io;
 use async_std::io::prelude::*;
 use async_std::task::{Context, Poll};
-use http_types::{
-    headers::{CONTENT_LENGTH, DATE, TRANSFER_ENCODING},
-    Response,
-};
+use http_types::headers::{CONTENT_LENGTH, DATE, TRANSFER_ENCODING};
+use http_types::Response;
 
 use crate::chunked::ChunkedEncoder;
 use crate::date::fmt_http_date;

@@ -57,9 +57,7 @@ async fn test_response_newlines() {
     let res = client::decode(response_fixture).await.unwrap();
 
     pretty_assertions::assert_eq!(
-        res.header(&headers::CONTENT_LENGTH)
-            .unwrap()
-            .last()
+        res[headers::CONTENT_LENGTH]
             .as_str()
             .parse::<usize>()
             .unwrap(),
