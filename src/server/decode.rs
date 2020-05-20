@@ -4,7 +4,7 @@ use std::str::FromStr;
 
 use async_std::io::{BufReader, Read, Write};
 use async_std::prelude::*;
-use http_types::headers::{CONTENT_LENGTH, HOST, TRANSFER_ENCODING};
+use http_types::headers::{CONTENT_LENGTH, EXPECT, HOST, TRANSFER_ENCODING};
 use http_types::{ensure, ensure_eq, format_err};
 use http_types::{Body, Method, Request};
 
@@ -128,14 +128,15 @@ fn set_url_and_port_from_host_header(req: &mut Request) -> http_types::Result<()
     Ok(())
 }
 
-async fn handle_100_continue<IO: Write + Unpin>(
-    req: &Request,
-    io: &mut IO,
-) -> http_types::Result<()> {
-    let expect_header_value = req.header("expect").map(|v| v.as_str());
+const EXPECT_HEADER_VALUE: &str = "100-continue";
+const EXPECT_RESPONSE: &[u8] = b"HTTP/1.1 100 Continue\r\n";
 
-    if let Some("100-continue") = expect_header_value {
-        io.write_all("HTTP/1.1 100 Continue\r\n".as_bytes()).await?;
+async fn handle_100_continue<IO>(req: &Request, io: &mut IO) -> http_types::Result<()>
+where
+    IO: Write + Unpin,
+{
+    if let Some(EXPECT_HEADER_VALUE) = req.header(EXPECT).map(|h| h.as_str()) {
+        io.write_all(EXPECT_RESPONSE).await?;
     }
 
     Ok(())
@@ -242,16 +243,8 @@ mod tests {
     }
 
     fn request_with_host_header(host: &str) -> Request {
-        let mut req = Request::new(
-            Method::Get,
-            url::Url::parse("http://_")
-                .unwrap()
-                .join("/some/path")
-                .unwrap(),
-        );
-
+        let mut req = Request::new(Method::Get, url::Url::parse("http://_/some/path").unwrap());
         req.insert_header(HOST, host);
-
         req
     }
 }

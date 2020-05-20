@@ -588,13 +588,8 @@ mod tests {
             assert_eq!(output, "MozillaDeveloperNetwork");
 
             let trailers = r.recv().await.unwrap();
-            let as_vec = trailers.iter().collect::<Vec<_>>();
-
-            assert_eq!(as_vec.len(), 1);
-            let (trailer_name, trailer_values) = as_vec[0];
-            assert_eq!(trailer_name, "Expires");
-            assert_eq!(trailer_values.iter().count(), 1);
-            assert_eq!(trailer_values.last(), "Wed, 21 Oct 2015 07:28:00 GMT");
+            assert_eq!(trailers.iter().count(), 1);
+            assert_eq!(trailers["Expires"], "Wed, 21 Oct 2015 07:28:00 GMT");
         });
     }
 }
