@@ -62,7 +62,7 @@ where
 
     let mut res = Response::new(StatusCode::try_from(code)?);
     for header in httparse_res.headers.iter() {
-        res.append_header(header.name, std::str::from_utf8(header.value)?)?;
+        res.append_header(header.name, std::str::from_utf8(header.value)?);
     }
 
     if res.header(DATE).is_none() {

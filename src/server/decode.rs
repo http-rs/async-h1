@@ -158,7 +158,7 @@ mod tests {
     #[test]
     fn handle_100_continue_sends_header_if_expects_is_exactly_right() {
         let mut request = Request::new(Method::Get, url::Url::parse("x:").unwrap());
-        request.append_header("expect", "100-continue").unwrap();
+        request.append_header("expect", "100-continue");
         let mut io = async_std::io::Cursor::new(vec![]);
         let result = async_std::task::block_on(handle_100_continue(&request, &mut io));
         assert_eq!(
@@ -171,9 +171,7 @@ mod tests {
     #[test]
     fn handle_100_continue_does_nothing_if_expects_header_is_wrong() {
         let mut request = Request::new(Method::Get, url::Url::parse("x:").unwrap());
-        request
-            .append_header("expect", "110-extensions-not-allowed")
-            .unwrap();
+        request.append_header("expect", "110-extensions-not-allowed");
         let mut io = async_std::io::Cursor::new(vec![]);
         let result = async_std::task::block_on(handle_100_continue(&request, &mut io));
         assert_eq!(std::str::from_utf8(&io.into_inner()).unwrap(), "");
