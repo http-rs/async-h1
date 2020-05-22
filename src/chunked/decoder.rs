@@ -7,7 +7,7 @@ use std::task::{Context, Poll};
 use async_std::io::{self, Read};
 use async_std::sync::Arc;
 use byte_pool::{Block, BytePool};
-use http_types::trailers::{Trailers, TrailersSender};
+use http_types::trailers::{Sender, Trailers};
 
 const INITIAL_CAPACITY: usize = 1024 * 4;
 const MAX_CAPACITY: usize = 512 * 1024 * 1024; // 512 MiB
@@ -32,11 +32,11 @@ pub(crate) struct ChunkedDecoder<R: Read> {
     /// Current state.
     state: State,
     /// Trailer channel sender.
-    trailer_sender: Option<TrailersSender>,
+    trailer_sender: Option<Sender>,
 }
 
 impl<R: Read> ChunkedDecoder<R> {
-    pub(crate) fn new(inner: R, trailer_sender: TrailersSender) -> Self {
+    pub(crate) fn new(inner: R, trailer_sender: Sender) -> Self {
         ChunkedDecoder {
             inner,
             buffer: POOL.alloc(INITIAL_CAPACITY),
@@ -156,7 +156,7 @@ impl<R: Read + Unpin> ChunkedDecoder<R> {
                 let sender =
                     sender.expect("invalid chunked state, tried sending multiple trailers");
 
-                let fut = Box::pin(sender.send(Ok(headers)));
+                let fut = Box::pin(sender.send(headers));
                 Ok(DecodeResult::Some {
                     read: 0,
                     new_state: Some(State::TrailerSending(fut)),
@@ -483,10 +483,7 @@ fn decode_trailer(buffer: Block<'static>, pos: &Range<usize>) -> io::Result<Deco
         Ok(Status::Complete((used, headers))) => {
             let mut trailers = Trailers::new();
             for header in headers {
-                let value = std::string::String::from_utf8_lossy(header.value).to_string();
-                if let Err(err) = trailers.insert(header.name, value) {
-                    return Err(io::Error::new(io::ErrorKind::Other, err.to_string()));
-                }
+                trailers.insert(header.name, String::from_utf8_lossy(header.value).as_ref());
             }
 
             Ok(DecodeResult::Some {
@@ -527,7 +524,7 @@ mod tests {
             );
 
             let (s, _r) = async_std::sync::channel(1);
-            let sender = TrailersSender::new(s);
+            let sender = Sender::new(s);
             let mut decoder = ChunkedDecoder::new(input, sender);
 
             let mut output = String::new();
@@ -553,7 +550,7 @@ mod tests {
             input.extend("\r\n0\r\n\r\n".as_bytes());
 
             let (s, _r) = async_std::sync::channel(1);
-            let sender = TrailersSender::new(s);
+            let sender = Sender::new(s);
             let mut decoder = ChunkedDecoder::new(async_std::io::Cursor::new(input), sender);
 
             let mut output = String::new();
@@ -583,21 +580,16 @@ mod tests {
                     .as_bytes(),
             );
             let (s, r) = async_std::sync::channel(1);
-            let sender = TrailersSender::new(s);
+            let sender = Sender::new(s);
             let mut decoder = ChunkedDecoder::new(input, sender);
 
             let mut output = String::new();
             decoder.read_to_string(&mut output).await.unwrap();
             assert_eq!(output, "MozillaDeveloperNetwork");
 
-            let trailer = r.recv().await.unwrap().unwrap();
-            assert_eq!(
-                trailer.iter().collect::<Vec<_>>(),
-                vec![(
-                    &"Expires".parse().unwrap(),
-                    &vec!["Wed, 21 Oct 2015 07:28:00 GMT".parse().unwrap()],
-                )]
-            );
+            let trailers = r.recv().await.unwrap();
+            assert_eq!(trailers.iter().count(), 1);
+            assert_eq!(trailers["Expires"], "Wed, 21 Oct 2015 07:28:00 GMT");
         });
     }
 }

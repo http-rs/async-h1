@@ -2,7 +2,7 @@ use async_std::io::{self, Read};
 use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use http_types::format_err;
-use http_types::{Method, Request};
+use http_types::{headers::HOST, Method, Request};
 
 use std::pin::Pin;
 
@@ -54,7 +54,7 @@ impl Encoder {
         log::trace!("> {}", &val);
         buf.write_all(val.as_bytes()).await?;
 
-        if req.header(&http_types::headers::HOST).is_none() {
+        if req.header(HOST).is_none() {
             // Insert Host header
             // Insert host
             let host = req.url().host_str();

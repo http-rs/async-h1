@@ -28,7 +28,7 @@ async fn accept(stream: TcpStream) -> http_types::Result<()> {
     println!("starting new connection from {}", stream.peer_addr()?);
     async_h1::accept(stream.clone(), |_req| async move {
         let mut res = Response::new(StatusCode::Ok);
-        res.insert_header("Content-Type", "text/plain")?;
+        res.insert_header("Content-Type", "text/plain");
         res.set_body("Hello world");
         Ok(res)
     })

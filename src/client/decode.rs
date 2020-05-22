@@ -2,12 +2,11 @@ use async_std::io::{BufReader, Read};
 use async_std::prelude::*;
 use http_types::{ensure, ensure_eq, format_err};
 use http_types::{
-    headers::{HeaderName, HeaderValue, CONTENT_LENGTH, DATE, TRANSFER_ENCODING},
+    headers::{CONTENT_LENGTH, DATE, TRANSFER_ENCODING},
     Body, Response, StatusCode,
 };
 
 use std::convert::TryFrom;
-use std::str::FromStr;
 
 use crate::chunked::ChunkedDecoder;
 use crate::date::fmt_http_date;
@@ -63,18 +62,16 @@ where
 
     let mut res = Response::new(StatusCode::try_from(code)?);
     for header in httparse_res.headers.iter() {
-        let name = HeaderName::from_str(header.name)?;
-        let value = HeaderValue::from_str(std::str::from_utf8(header.value)?)?;
-        res.append_header(name, value)?;
+        res.append_header(header.name, std::str::from_utf8(header.value)?);
     }
 
-    if res.header(&DATE).is_none() {
+    if res.header(DATE).is_none() {
         let date = fmt_http_date(std::time::SystemTime::now());
-        res.insert_header(DATE, &format!("date: {}\r\n", date)[..])?;
+        res.insert_header(DATE, &format!("date: {}\r\n", date)[..]);
     }
 
-    let content_length = res.header(&CONTENT_LENGTH);
-    let transfer_encoding = res.header(&TRANSFER_ENCODING);
+    let content_length = res.header(CONTENT_LENGTH);
+    let transfer_encoding = res.header(TRANSFER_ENCODING);
 
     ensure!(
         content_length.is_none() || transfer_encoding.is_none(),
@@ -82,7 +79,7 @@ where
     );
 
     if let Some(encoding) = transfer_encoding {
-        if !encoding.is_empty() && encoding.last().unwrap().as_str() == "chunked" {
+        if encoding.last().as_str() == "chunked" {
             let trailers_sender = res.send_trailers();
             let reader = BufReader::new(ChunkedDecoder::new(reader, trailers_sender));
             res.set_body(Body::from_reader(reader, None));
@@ -94,7 +91,7 @@ where
 
     // Check for Content-Length.
     if let Some(len) = content_length {
-        let len = len.last().unwrap().as_str().parse::<usize>()?;
+        let len = len.last().as_str().parse::<usize>()?;
         res.set_body(Body::from_reader(reader.take(len as u64), Some(len)));
     }
 
