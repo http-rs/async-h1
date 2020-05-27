@@ -118,9 +118,7 @@ fn set_url_and_port_from_host_header(req: &mut Request) -> http_types::Result<()
 
     if !req.url().cannot_be_a_base() {
         if let Some(colon) = host.find(":") {
-            println!("AAAA");
             req.url_mut().set_host(Some(&host[0..colon]))?;
-            println!("AAAA");
             req.url_mut()
                 .set_port(host[colon + 1..].parse().ok())
                 .unwrap();
