@@ -17,7 +17,7 @@ const LF: u8 = b'\n';
 const HTTP_1_1_VERSION: u8 = 1;
 
 /// Decode an HTTP request on the server.
-pub(crate) async fn decode<IO>(mut io: IO) -> http_types::Result<Option<Request>>
+pub async fn decode<IO>(mut io: IO) -> http_types::Result<Option<Request>>
 where
     IO: Read + Write + Clone + Send + Sync + Unpin + 'static,
 {
@@ -116,13 +116,17 @@ fn set_url_and_port_from_host_header(req: &mut Request) -> http_types::Result<()
         .ok_or_else(|| format_err!("Mandatory Host header missing"))? //  https://tools.ietf.org/html/rfc7230#section-5.4
         .to_string();
 
-    if let Some(colon) = host.find(":") {
-        req.url_mut().set_host(Some(&host[0..colon]))?;
-        req.url_mut()
-            .set_port(host[colon + 1..].parse().ok())
-            .unwrap();
-    } else {
-        req.url_mut().set_host(Some(&host))?;
+    if !req.url().cannot_be_a_base() {
+        if let Some(colon) = host.find(":") {
+            println!("AAAA");
+            req.url_mut().set_host(Some(&host[0..colon]))?;
+            println!("AAAA");
+            req.url_mut()
+                .set_port(host[colon + 1..].parse().ok())
+                .unwrap();
+        } else {
+            req.url_mut().set_host(Some(&host))?;
+        }
     }
 
     Ok(())
