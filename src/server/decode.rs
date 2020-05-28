@@ -6,11 +6,10 @@ use async_std::io::{BufReader, Read, Write};
 use async_std::prelude::*;
 use http_types::headers::{CONTENT_LENGTH, EXPECT, TRANSFER_ENCODING};
 use http_types::{ensure, ensure_eq, format_err};
-use http_types::{Body, Method, Request};
+use http_types::{Body, Method, Request, Url};
 
 use crate::chunked::ChunkedDecoder;
 use crate::{MAX_HEADERS, MAX_HEAD_LENGTH};
-use url::Url;
 
 const LF: u8 = b'\n';
 

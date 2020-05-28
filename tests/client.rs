@@ -1,8 +1,7 @@
 use crate::common::fixture_path;
 use async_h1::client;
 use async_std::fs::File;
-use http_types::{headers, Method, Request, StatusCode};
-use url::Url;
+use http_types::{headers, Method, Request, StatusCode, Url};
 
 mod common;
 
