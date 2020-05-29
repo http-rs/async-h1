@@ -4,9 +4,9 @@ use std::str::FromStr;
 
 use async_std::io::{BufReader, Read, Write};
 use async_std::prelude::*;
-use http_types::headers::{CONTENT_LENGTH, EXPECT, HOST, TRANSFER_ENCODING};
+use http_types::headers::{CONTENT_LENGTH, EXPECT, TRANSFER_ENCODING};
 use http_types::{ensure, ensure_eq, format_err};
-use http_types::{Body, Method, Request};
+use http_types::{Body, Method, Request, Url};
 
 use crate::chunked::ChunkedDecoder;
 use crate::{MAX_HEADERS, MAX_HEAD_LENGTH};
@@ -56,9 +56,6 @@ where
     let method = httparse_req.method;
     let method = method.ok_or_else(|| format_err!("No method found"))?;
 
-    let path = httparse_req.path;
-    let path = path.ok_or_else(|| format_err!("No uri found"))?;
-
     let version = httparse_req.version;
     let version = version.ok_or_else(|| format_err!("No version found"))?;
 
@@ -69,16 +66,14 @@ where
         version
     );
 
-    let mut req = Request::new(
-        Method::from_str(method)?,
-        url::Url::parse("http://_").unwrap().join(path)?,
-    );
+    let url = url_from_httparse_req(&httparse_req)?;
+
+    let mut req = Request::new(Method::from_str(method)?, url);
 
     for header in httparse_req.headers.iter() {
         req.insert_header(header.name, std::str::from_utf8(header.value)?);
     }
 
-    set_url_and_port_from_host_header(&mut req)?;
     handle_100_continue(&req, &mut io).await?;
 
     let content_length = req.header(CONTENT_LENGTH);
@@ -109,25 +104,27 @@ where
     Ok(Some(req))
 }
 
-fn set_url_and_port_from_host_header(req: &mut Request) -> http_types::Result<()> {
+fn url_from_httparse_req(req: &httparse::Request<'_, '_>) -> http_types::Result<Url> {
+    let path = req.path.ok_or_else(|| format_err!("No uri found"))?;
     let host = req
-        .header(HOST)
-        .map(|header| header.last()) // There must only exactly one Host header, so this is permissive
-        .ok_or_else(|| format_err!("Mandatory Host header missing"))? //  https://tools.ietf.org/html/rfc7230#section-5.4
-        .to_string();
+        .headers
+        .iter()
+        .filter(|x| x.name.eq_ignore_ascii_case("host"))
+        .next()
+        .ok_or_else(|| format_err!("Mandatory Host header missing"))?
+        .value;
 
-    if !req.url().cannot_be_a_base() {
-        if let Some(colon) = host.find(":") {
-            req.url_mut().set_host(Some(&host[0..colon]))?;
-            req.url_mut()
-                .set_port(host[colon + 1..].parse().ok())
-                .unwrap();
-        } else {
-            req.url_mut().set_host(Some(&host))?;
-        }
+    let host = std::str::from_utf8(host)?;
+
+    if path.starts_with("http://") || path.starts_with("https://") {
+        Ok(Url::parse(path)?)
+    } else if path.starts_with("/") {
+        Ok(Url::parse(&format!("http://{}/", host))?.join(path)?)
+    } else if req.method.unwrap().eq_ignore_ascii_case("connect") {
+        Ok(Url::parse(&format!("http://{}/", path))?)
+    } else {
+        Err(format_err!("unexpected uri format"))
     }
-
-    Ok(())
 }
 
 const EXPECT_HEADER_VALUE: &str = "100-continue";
@@ -148,9 +145,70 @@ where
 mod tests {
     use super::*;
 
+    fn httparse_req(buf: &str, f: impl Fn(httparse::Request<'_, '_>)) {
+        let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
+        let mut res = httparse::Request::new(&mut headers[..]);
+        res.parse(buf.as_bytes()).unwrap();
+        f(res)
+    }
+
+    #[test]
+    fn url_for_connect() {
+        httparse_req(
+            "CONNECT server.example.com:443 HTTP/1.1\r\nHost: server.example.com:443\r\n",
+            |req| {
+                let url = url_from_httparse_req(&req).unwrap();
+                assert_eq!(url.as_str(), "http://server.example.com:443/");
+            },
+        );
+    }
+
+    #[test]
+    fn url_for_host_plus_path() {
+        httparse_req(
+            "GET /some/resource HTTP/1.1\r\nHost: server.example.com:443\r\n",
+            |req| {
+                let url = url_from_httparse_req(&req).unwrap();
+                assert_eq!(url.as_str(), "http://server.example.com:443/some/resource");
+            },
+        )
+    }
+
+    #[test]
+    fn url_for_host_plus_absolute_url() {
+        httparse_req(
+            "GET http://domain.com/some/resource HTTP/1.1\r\nHost: server.example.com\r\n",
+            |req| {
+                let url = url_from_httparse_req(&req).unwrap();
+                assert_eq!(url.as_str(), "http://domain.com/some/resource"); // host header MUST be ignored according to spec
+            },
+        )
+    }
+
+    #[test]
+    fn url_for_conflicting_connect() {
+        httparse_req(
+            "CONNECT server.example.com:443 HTTP/1.1\r\nHost: conflicting.host\r\n",
+            |req| {
+                let url = url_from_httparse_req(&req).unwrap();
+                assert_eq!(url.as_str(), "http://server.example.com:443/");
+            },
+        )
+    }
+
+    #[test]
+    fn url_for_malformed_resource_path() {
+        httparse_req(
+            "GET not-a-url HTTP/1.1\r\nHost: server.example.com\r\n",
+            |req| {
+                assert!(url_from_httparse_req(&req).is_err());
+            },
+        )
+    }
+
     #[test]
     fn handle_100_continue_does_nothing_with_no_expect_header() {
-        let request = Request::new(Method::Get, url::Url::parse("x:").unwrap());
+        let request = Request::new(Method::Get, Url::parse("x:").unwrap());
         let mut io = async_std::io::Cursor::new(vec![]);
         let result = async_std::task::block_on(handle_100_continue(&request, &mut io));
         assert_eq!(std::str::from_utf8(&io.into_inner()).unwrap(), "");
@@ -159,7 +217,7 @@ mod tests {
 
     #[test]
     fn handle_100_continue_sends_header_if_expects_is_exactly_right() {
-        let mut request = Request::new(Method::Get, url::Url::parse("x:").unwrap());
+        let mut request = Request::new(Method::Get, Url::parse("x:").unwrap());
         request.append_header("expect", "100-continue");
         let mut io = async_std::io::Cursor::new(vec![]);
         let result = async_std::task::block_on(handle_100_continue(&request, &mut io));
@@ -172,79 +230,11 @@ mod tests {
 
     #[test]
     fn handle_100_continue_does_nothing_if_expects_header_is_wrong() {
-        let mut request = Request::new(Method::Get, url::Url::parse("x:").unwrap());
+        let mut request = Request::new(Method::Get, Url::parse("x:").unwrap());
         request.append_header("expect", "110-extensions-not-allowed");
         let mut io = async_std::io::Cursor::new(vec![]);
         let result = async_std::task::block_on(handle_100_continue(&request, &mut io));
         assert_eq!(std::str::from_utf8(&io.into_inner()).unwrap(), "");
         assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_setting_host_with_no_port() {
-        let mut request = request_with_host_header("subdomain.mydomain.tld");
-        set_url_and_port_from_host_header(&mut request).unwrap();
-        assert_eq!(
-            request.url(),
-            &url::Url::parse("http://subdomain.mydomain.tld/some/path").unwrap()
-        );
-    }
-
-    #[test]
-    fn test_setting_host_with_a_port() {
-        let mut request = request_with_host_header("subdomain.mydomain.tld:8080");
-        set_url_and_port_from_host_header(&mut request).unwrap();
-        assert_eq!(
-            request.url(),
-            &url::Url::parse("http://subdomain.mydomain.tld:8080/some/path").unwrap()
-        );
-    }
-
-    #[test]
-    fn test_setting_host_with_an_ip_and_port() {
-        let mut request = request_with_host_header("12.34.56.78:90");
-        set_url_and_port_from_host_header(&mut request).unwrap();
-        assert_eq!(
-            request.url(),
-            &url::Url::parse("http://12.34.56.78:90/some/path").unwrap()
-        );
-    }
-
-    #[test]
-    fn test_malformed_nonnumeric_port_is_ignored() {
-        let mut request = request_with_host_header("hello.world:uh-oh");
-        set_url_and_port_from_host_header(&mut request).unwrap();
-        assert_eq!(
-            request.url(),
-            &url::Url::parse("http://hello.world/some/path").unwrap()
-        );
-    }
-
-    #[test]
-    fn test_malformed_trailing_colon_is_ignored() {
-        let mut request = request_with_host_header("edge.cases:");
-        set_url_and_port_from_host_header(&mut request).unwrap();
-        assert_eq!(
-            request.url(),
-            &url::Url::parse("http://edge.cases/some/path").unwrap()
-        );
-    }
-
-    #[test]
-    fn test_malformed_leading_colon_is_invalid_host_value() {
-        let mut request = request_with_host_header(":300");
-        assert!(set_url_and_port_from_host_header(&mut request).is_err());
-    }
-
-    #[test]
-    fn test_malformed_invalid_url_host_is_invalid_host_header_value() {
-        let mut request = request_with_host_header(" ");
-        assert!(set_url_and_port_from_host_header(&mut request).is_err());
-    }
-
-    fn request_with_host_header(host: &str) -> Request {
-        let mut req = Request::new(Method::Get, url::Url::parse("http://_/some/path").unwrap());
-        req.insert_header(HOST, host);
-        req
     }
 }
