@@ -10,7 +10,7 @@ pub use decode::decode;
 pub use encode::Encoder;
 
 /// Opens an HTTP/1.1 connection to a remote host.
-pub async fn connect<RW>(mut stream: RW, req: Request) -> http_types::Result<Response>
+pub async fn connect<RW>(mut stream: RW, req: Request) -> http_types::Result<Option<Response>>
 where
     RW: Read + Write + Send + Sync + Unpin + 'static,
 {

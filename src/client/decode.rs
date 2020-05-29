@@ -16,7 +16,7 @@ const CR: u8 = b'\r';
 const LF: u8 = b'\n';
 
 /// Decode an HTTP response on the client.
-pub async fn decode<R>(reader: R) -> http_types::Result<Response>
+pub async fn decode<R>(reader: R) -> http_types::Result<Option<Response>>
 where
     R: Read + Unpin + Send + Sync + 'static,
 {
@@ -29,7 +29,9 @@ where
     loop {
         let bytes_read = reader.read_until(LF, &mut buf).await?;
         // No more bytes are yielded from the stream.
-        assert!(bytes_read != 0, "Empty response"); // TODO: ensure?
+        if bytes_read == 0 {
+            return Ok(None);
+        }
 
         // Prevent CWE-400 DDOS with large HTTP Headers.
         ensure!(
@@ -84,7 +86,7 @@ where
             res.set_body(Body::from_reader(reader, None));
 
             // Return the response.
-            return Ok(res);
+            return Ok(Some(res));
         }
     }
 
@@ -95,5 +97,5 @@ where
     }
 
     // Return the response.
-    Ok(res)
+    Ok(Some(res))
 }
