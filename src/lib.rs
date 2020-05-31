@@ -115,3 +115,4 @@ pub mod client;
 pub use client::connect;
 pub use server::{accept, accept_with_opts, ServerOptions};
 pub use future::TimeoutError;
+pub use http_types::{Method as HttpMethod, Request as HttpRequest, Response as HttpResponse};
