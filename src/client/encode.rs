@@ -1,10 +1,10 @@
-use async_std::io::{self, Read};
-use async_std::prelude::*;
-use async_std::task::{Context, Poll};
 use http_types::format_err;
 use http_types::{headers::HOST, Method, Request};
 
 use std::pin::Pin;
+use futures_util::{AsyncWriteExt};
+use futures_io::{AsyncRead};
+use futures_core::task::{Context, Poll};
 
 /// An HTTP encoder.
 #[doc(hidden)]
@@ -110,12 +110,12 @@ impl Encoder {
     }
 }
 
-impl Read for Encoder {
+impl AsyncRead for Encoder {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+    ) -> Poll<futures_io::Result<usize>> {
         // Send the headers. As long as the headers aren't fully sent yet we
         // keep sending more of the headers.
         let mut bytes_read = 0;

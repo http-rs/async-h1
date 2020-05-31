@@ -2,9 +2,9 @@
 
 use std::time::Duration;
 
-use async_std::future::{timeout, Future, TimeoutError};
-use async_std::io::{self};
-use async_std::io::{Read, Write};
+//use async_std::future::{timeout, Future, TimeoutError};
+//use async_std::io::{self};
+//use async_std::io::{Read, Write};
 use http_types::{Request, Response};
 
 mod decode;
@@ -12,6 +12,10 @@ mod encode;
 
 use decode::decode;
 use encode::Encoder;
+use futures_io::{AsyncRead, AsyncWrite};
+use futures_core::Future;
+use futures_util::{AsyncReadExt, AsyncWriteExt};
+use crate::future::{timeout, TimeoutError};
 
 /// Configure the server.
 #[derive(Debug, Clone)]
@@ -33,7 +37,7 @@ impl Default for ServerOptions {
 /// Supports `KeepAlive` requests by default.
 pub async fn accept<RW, F, Fut>(io: RW, endpoint: F) -> http_types::Result<()>
 where
-    RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
+    RW: AsyncRead + AsyncWrite + Clone + Send + Sync + Unpin + 'static,
     F: Fn(Request) -> Fut,
     Fut: Future<Output = http_types::Result<Response>>,
 {
@@ -49,7 +53,7 @@ pub async fn accept_with_opts<RW, F, Fut>(
     opts: ServerOptions,
 ) -> http_types::Result<()>
 where
-    RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
+    RW: AsyncRead + AsyncWrite + Clone + Send + Sync + Unpin + 'static,
     F: Fn(Request) -> Fut,
     Fut: Future<Output = http_types::Result<Response>>,
 {
@@ -75,7 +79,10 @@ where
         let mut encoder = Encoder::new(res);
 
         // Stream the response to the writer.
-        io::copy(&mut encoder, &mut io).await?;
+        let mut ebuf = Vec::new();
+        encoder.read_to_end(&mut ebuf).await?;
+        io.write_all(&mut ebuf).await?;
+        //io::copy(&mut encoder, &mut io).await?;
     }
 
     Ok(())
