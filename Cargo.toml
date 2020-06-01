@@ -28,7 +28,7 @@ http-types = {git="https://github.com/serzhiio/http-types", branch="agnostic"}
 pin-project-lite = "0.1.1"
 byte-pool = "0.2.1"
 lazy_static = "1.4.0"
-futures-core = "0.3.1"
+futures-core = "0.3"
 log = "0.4"
 
 [dev-dependencies]
