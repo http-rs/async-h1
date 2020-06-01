@@ -1,8 +1,5 @@
 use std::pin::Pin;
 
-//use async_std::io;
-//use async_std::io::prelude::*;
-//use async_std::task::{Context, Poll};
 use http_types::Response;
 use futures_core::task::{Context, Poll};
 use futures_io::AsyncBufRead;
