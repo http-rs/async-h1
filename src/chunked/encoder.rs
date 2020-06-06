@@ -1,8 +1,10 @@
 use std::pin::Pin;
 
+use async_std::future::Future;
 use async_std::io;
 use async_std::io::prelude::*;
-use async_std::task::{Context, Poll};
+use async_std::task::{ready, Context, Poll};
+use http_types::trailers;
 use http_types::Response;
 
 const CR: u8 = b'\r';
@@ -35,6 +37,12 @@ pub(crate) struct ChunkedEncoder {
     bytes_written: usize,
     /// The internal encoder state.
     state: State,
+    /// The trailers receiver
+    trailers_receiver: Option<trailers::Receiver>,
+    /// A vector of encoded trailing headers.
+    trailers_buf: Vec<u8>,
+    /// The amount of trailer bytes written.
+    trailer_bytes_written: usize,
 }
 
 impl ChunkedEncoder {
@@ -43,6 +51,9 @@ impl ChunkedEncoder {
         Self {
             state: State::Start,
             bytes_written: 0,
+            trailers_receiver: None,
+            trailers_buf: vec![],
+            trailer_bytes_written: 0,
         }
     }
 
@@ -220,8 +231,28 @@ impl ChunkedEncoder {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        // TODO: actually wait for trailers to be received.
-        self.dispatch(State::EncodeTrailers, res, cx, buf)
+        if !res.has_trailers() {
+            return self.dispatch(State::EndOfStream, res, cx, buf);
+        }
+
+        if self.trailers_receiver.is_none() {
+            self.trailers_receiver = Some(res.recv_trailers());
+        }
+
+        let mut recv = self.trailers_receiver.as_mut().unwrap();
+        let trailers = ready!(Pin::new(&mut recv).poll(cx));
+        let trailers = trailers.expect("Trailers can only be sent once");
+
+        for (header, values) in trailers.iter() {
+            for value in values.iter() {
+                std::io::Write::write_fmt(
+                    &mut self.trailers_buf,
+                    format_args!("{}: {}\r\n", header, value),
+                )?
+            }
+        }
+
+        return self.dispatch(State::EncodeTrailers, res, cx, buf);
     }
 
     /// Send trailers to the buffer.
@@ -231,8 +262,21 @@ impl ChunkedEncoder {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        // TODO: actually encode trailers here.
-        self.dispatch(State::EndOfStream, res, cx, buf)
+        // Figure out how many bytes we can read.
+        let upper = (self.bytes_written + self.trailers_buf.len() - self.trailer_bytes_written)
+            .min(buf.len());
+
+        // Read bytes from trailers
+        let range = self.bytes_written..upper;
+        let len = range.end - range.start;
+        buf[self.bytes_written..len].copy_from_slice(&self.trailers_buf[range]);
+        self.trailer_bytes_written += len;
+
+        if self.trailers_buf.len() < self.trailer_bytes_written {
+            return Poll::Ready(Ok(len));
+        } else {
+            self.dispatch(State::EndOfStream, res, cx, buf)
+        }
     }
 
     /// Encode the end of the stream.
