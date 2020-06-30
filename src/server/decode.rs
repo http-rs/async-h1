@@ -128,7 +128,7 @@ fn url_from_httparse_req(req: &httparse::Request<'_, '_>) -> http_types::Result<
 }
 
 const EXPECT_HEADER_VALUE: &str = "100-continue";
-const EXPECT_RESPONSE: &[u8] = b"HTTP/1.1 100 Continue\r\n";
+const EXPECT_RESPONSE: &[u8] = b"HTTP/1.1 100 Continue\r\n\r\n";
 
 async fn handle_100_continue<IO>(req: &Request, io: &mut IO) -> http_types::Result<()>
 where
@@ -223,7 +223,7 @@ mod tests {
         let result = async_std::task::block_on(handle_100_continue(&request, &mut io));
         assert_eq!(
             std::str::from_utf8(&io.into_inner()).unwrap(),
-            "HTTP/1.1 100 Continue\r\n"
+            "HTTP/1.1 100 Continue\r\n\r\n"
         );
         assert!(result.is_ok());
     }
