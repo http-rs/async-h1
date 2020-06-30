@@ -1,0 +1,4 @@
+HEAD / HTTP/1.1
+host: example.com
+user-agent: curl/7.54.0
+
