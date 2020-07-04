@@ -71,7 +71,7 @@ impl Read for Encoder {
 
 impl Encoder {
     /// Create a new instance of Encoder.
-    pub fn new(res: Response, method: Method) -> Self {
+    pub fn new(res: Response) -> Self {
         Self {
             res,
             depth: 0,
