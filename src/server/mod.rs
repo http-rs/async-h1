@@ -3,8 +3,7 @@
 use std::time::Duration;
 
 use async_std::future::{timeout, Future, TimeoutError};
-use async_std::io::{self};
-use async_std::io::{Read, Write};
+use async_std::io::{self, Read, Write};
 use http_types::{Request, Response};
 
 mod decode;
