@@ -16,6 +16,7 @@ const CR: u8 = b'\r';
 const LF: u8 = b'\n';
 
 /// Decode an HTTP response on the client.
+#[doc(hidden)]
 pub async fn decode<R>(reader: R) -> http_types::Result<Response>
 where
     R: Read + Unpin + Send + Sync + 'static,

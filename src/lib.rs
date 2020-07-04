@@ -106,8 +106,9 @@ const MAX_HEAD_LENGTH: usize = 8 * 1024;
 
 mod chunked;
 mod date;
-pub mod server;
+mod server;
 
+#[doc(hidden)]
 pub mod client;
 
 pub use client::connect;

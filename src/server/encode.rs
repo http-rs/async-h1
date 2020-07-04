@@ -15,7 +15,7 @@ use crate::date::fmt_http_date;
 ///
 /// This is returned from [`encode`].
 #[derive(Debug)]
-pub struct Encoder {
+pub(crate) struct Encoder {
     /// The current level of recursion the encoder is in.
     depth: u16,
     /// HTTP headers to be sent.
@@ -71,7 +71,7 @@ impl Read for Encoder {
 
 impl Encoder {
     /// Create a new instance of Encoder.
-    pub fn new(res: Response) -> Self {
+    pub(crate) fn new(res: Response, method: Method) -> Self {
         Self {
             res,
             depth: 0,

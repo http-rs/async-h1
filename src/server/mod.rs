@@ -3,14 +3,15 @@
 use std::time::Duration;
 
 use async_std::future::{timeout, Future, TimeoutError};
-use async_std::io::{self, Read, Write};
+use async_std::io::{self};
+use async_std::io::{Read, Write};
 use http_types::{Request, Response};
 
 mod decode;
 mod encode;
 
-pub use decode::decode;
-pub use encode::Encoder;
+use decode::decode;
+use encode::Encoder;
 
 /// Configure the server.
 #[derive(Debug, Clone)]

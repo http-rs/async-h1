@@ -7,6 +7,7 @@ use http_types::{headers::HOST, Method, Request};
 use std::pin::Pin;
 
 /// An HTTP encoder.
+#[doc(hidden)]
 #[derive(Debug)]
 pub struct Encoder {
     /// Keep track how far we've indexed into the headers + body.
