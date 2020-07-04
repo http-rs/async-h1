@@ -12,8 +12,6 @@ use crate::chunked::ChunkedEncoder;
 use crate::date::fmt_http_date;
 
 /// A streaming HTTP encoder.
-///
-/// This is returned from [`encode`].
 #[derive(Debug)]
 pub struct Encoder {
     /// The current level of recursion the encoder is in.
