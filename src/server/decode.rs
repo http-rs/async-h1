@@ -17,7 +17,7 @@ const LF: u8 = b'\n';
 const HTTP_1_1_VERSION: u8 = 1;
 
 /// Decode an HTTP request on the server.
-pub(crate) async fn decode<IO>(mut io: IO) -> http_types::Result<Option<Request>>
+pub async fn decode<IO>(mut io: IO) -> http_types::Result<Option<Request>>
 where
     IO: Read + Write + Clone + Send + Sync + Unpin + 'static,
 {

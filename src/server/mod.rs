@@ -10,8 +10,8 @@ use http_types::{Request, Response};
 mod decode;
 mod encode;
 
-use decode::decode;
-use encode::Encoder;
+pub use decode::decode;
+pub use encode::Encoder;
 
 /// Configure the server.
 #[derive(Debug, Clone)]
