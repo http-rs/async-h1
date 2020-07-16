@@ -64,7 +64,6 @@ impl AsyncRead for Encoder {
     ) -> Poll<futures_io::Result<usize>> {
         self.bytes_written = 0;
         let res = self.run(cx, buf);
-        log::trace!("ServerEncoder {} bytes written", self.bytes_written);
         res
     }
 }
@@ -93,7 +92,6 @@ impl Encoder {
         buf: &mut [u8],
     ) -> Poll<futures_io::Result<usize>> {
         use State::*;
-        log::trace!("ServerEncoder state: {:?} -> {:?}", self.state, state);
 
         #[cfg(debug_assertions)]
         match self.state {

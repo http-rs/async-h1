@@ -3,7 +3,7 @@ use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
-use smol::Timer;
+use async_io::Timer;
 
 use pin_project_lite::pin_project;
 use futures_core::task::{Context, Poll};
@@ -31,7 +31,7 @@ impl<F> TimeoutFuture<F> {
     pub(super) fn new(future: F, dur: Duration) -> TimeoutFuture<F> {
         TimeoutFuture {
             future,
-            delay: smol::Timer::after(dur),
+            delay: Timer::new(dur),
         }
     }
 }

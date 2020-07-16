@@ -72,7 +72,6 @@ impl ChunkedEncoder {
     ) -> Poll<futures_io::Result<usize>> {
         self.bytes_written = 0;
         let res = self.run(res, cx, buf);
-        log::trace!("ChunkedEncoder {} bytes written", self.bytes_written);
         res
     }
 
@@ -103,7 +102,6 @@ impl ChunkedEncoder {
         buf: &mut [u8],
     ) -> Poll<futures_io::Result<usize>> {
         use State::*;
-        log::trace!("ChunkedEncoder state: {:?} -> {:?}", self.state, state);
 
         #[cfg(debug_assertions)]
         match self.state {

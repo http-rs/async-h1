@@ -16,7 +16,6 @@ where
     RW: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
 {
     let mut req = Encoder::encode(req).await?;
-    log::trace!("> {:?}", &req);
 
     let mut req_buf = Vec::new();
 
@@ -25,7 +24,6 @@ where
     //io::copy(&mut req, &mut stream).await?;
 
     let res = decode(BufReader::new(stream)).await?;
-    log::trace!("< {:?}", &res);
 
     Ok(res)
 }

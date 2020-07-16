@@ -51,7 +51,6 @@ impl Encoder {
         }
 
         let val = format!("{} {} HTTP/1.1\r\n", req.method(), url);
-        log::trace!("> {}", &val);
         buf.write_all(val.as_bytes()).await?;
 
         if req.header(HOST).is_none() {
@@ -65,14 +64,12 @@ impl Encoder {
                 format!("host: {}\r\n", host)
             };
 
-            log::trace!("> {}", &val);
             buf.write_all(val.as_bytes()).await?;
         }
 
         // Insert Proxy-Connection header when method is CONNECT
         if req.method() == Method::Connect {
             let val = "proxy-connection: keep-alive\r\n".to_owned();
-            log::trace!("> {}", &val);
             buf.write_all(val.as_bytes()).await?;
         }
 
@@ -80,7 +77,6 @@ impl Encoder {
         // send all items in chunks.
         if let Some(len) = req.len() {
             let val = format!("content-length: {}\r\n", len);
-            log::trace!("> {}", &val);
             buf.write_all(val.as_bytes()).await?;
         } else {
             // write!(&mut buf, "Transfer-Encoding: chunked\r\n")?;
@@ -92,7 +88,6 @@ impl Encoder {
         for (header, values) in req.iter() {
             for value in values.iter() {
                 let val = format!("{}: {}\r\n", header, value);
-                log::trace!("> {}", &val);
                 buf.write_all(val.as_bytes()).await?;
             }
         }
