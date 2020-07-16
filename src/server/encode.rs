@@ -6,16 +6,14 @@ use async_std::io;
 use async_std::io::prelude::*;
 use async_std::task::{Context, Poll};
 use http_types::headers::{CONTENT_LENGTH, DATE, TRANSFER_ENCODING};
-use http_types::Response;
+use http_types::{Method, Response};
 
 use crate::chunked::ChunkedEncoder;
 use crate::date::fmt_http_date;
 
 /// A streaming HTTP encoder.
-///
-/// This is returned from [`encode`].
 #[derive(Debug)]
-pub(crate) struct Encoder {
+pub struct Encoder {
     /// The current level of recursion the encoder is in.
     depth: u16,
     /// HTTP headers to be sent.
@@ -36,6 +34,8 @@ pub(crate) struct Encoder {
     body_bytes_written: usize,
     /// An encoder for chunked encoding.
     chunked: ChunkedEncoder,
+    /// the http method that this response is in reply to
+    method: Method,
 }
 
 #[derive(Debug)]
@@ -69,7 +69,7 @@ impl Read for Encoder {
 
 impl Encoder {
     /// Create a new instance of Encoder.
-    pub(crate) fn new(res: Response) -> Self {
+    pub fn new(res: Response, method: Method) -> Self {
         Self {
             res,
             depth: 0,
@@ -80,6 +80,7 @@ impl Encoder {
             body_len: 0,
             body_bytes_written: 0,
             chunked: ChunkedEncoder::new(),
+            method,
         }
     }
 
@@ -97,7 +98,7 @@ impl Encoder {
         match self.state {
             Start => assert!(matches!(state, ComputeHead)),
             ComputeHead => assert!(matches!(state, EncodeHead)),
-            EncodeHead => assert!(matches!(state, EncodeChunkedBody | EncodeFixedBody)),
+            EncodeHead => assert!(matches!(state, EncodeChunkedBody | EncodeFixedBody | End)),
             EncodeFixedBody => assert!(matches!(state, End)),
             EncodeChunkedBody => assert!(matches!(state, End)),
             End => panic!("No state transitions allowed after the ServerEncoder has ended"),
@@ -176,14 +177,20 @@ impl Encoder {
         // If we've read the total length of the head we're done
         // reading the head and can transition to reading the body
         if self.head_bytes_written == head_len {
-            // The response length lets us know if we are encoding
-            // our body in chunks or not
-            match self.res.len() {
-                Some(body_len) => {
-                    self.body_len = body_len;
-                    self.dispatch(State::EncodeFixedBody, cx, buf)
+            if self.method == Method::Head {
+                // If we are responding to a HEAD request, we MUST NOT send
+                // body content
+                self.dispatch(State::End, cx, buf)
+            } else {
+                // The response length lets us know if we are encoding
+                // our body in chunks or not
+                match self.res.len() {
+                    Some(body_len) => {
+                        self.body_len = body_len;
+                        self.dispatch(State::EncodeFixedBody, cx, buf)
+                    }
+                    None => self.dispatch(State::EncodeChunkedBody, cx, buf),
                 }
-                None => self.dispatch(State::EncodeChunkedBody, cx, buf),
             }
         } else {
             // If we haven't read the entire header it means `buf` isn't
