@@ -1,9 +1,8 @@
 use std::pin::Pin;
 
-use async_std::io;
-use async_std::io::prelude::*;
-use async_std::task::{Context, Poll};
 use http_types::Response;
+use futures_core::task::{Context, Poll};
+use futures_io::AsyncBufRead;
 
 const CR: u8 = b'\r';
 const LF: u8 = b'\n';
@@ -70,10 +69,9 @@ impl ChunkedEncoder {
         res: &mut Response,
         cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+    ) -> Poll<futures_io::Result<usize>> {
         self.bytes_written = 0;
         let res = self.run(res, cx, buf);
-        log::trace!("ChunkedEncoder {} bytes written", self.bytes_written);
         res
     }
 
@@ -83,7 +81,7 @@ impl ChunkedEncoder {
         res: &mut Response,
         cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+    ) -> Poll<futures_io::Result<usize>> {
         match self.state {
             State::Start => self.dispatch(State::EncodeChunks, res, cx, buf),
             State::EncodeChunks => self.encode_chunks(res, cx, buf),
@@ -102,9 +100,8 @@ impl ChunkedEncoder {
         res: &mut Response,
         cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+    ) -> Poll<futures_io::Result<usize>> {
         use State::*;
-        log::trace!("ChunkedEncoder state: {:?} -> {:?}", self.state, state);
 
         #[cfg(debug_assertions)]
         match self.state {
@@ -127,7 +124,7 @@ impl ChunkedEncoder {
         mut res: &mut Response,
         cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+    ) -> Poll<futures_io::Result<usize>> {
         // Get bytes from the underlying stream. If the stream is not ready yet,
         // return the header bytes if we have any.
         let src = match Pin::new(&mut res).poll_fill_buf(cx) {
@@ -195,7 +192,7 @@ impl ChunkedEncoder {
         res: &mut Response,
         cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+    ) -> Poll<futures_io::Result<usize>> {
         // Request a new buf if the current buf is too small to write into.
         if buf.len() < 3 {
             cx.waker().wake_by_ref();
@@ -219,7 +216,7 @@ impl ChunkedEncoder {
         res: &mut Response,
         cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+    ) -> Poll<futures_io::Result<usize>> {
         // TODO: actually wait for trailers to be received.
         self.dispatch(State::EncodeTrailers, res, cx, buf)
     }
@@ -230,7 +227,7 @@ impl ChunkedEncoder {
         res: &mut Response,
         cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+    ) -> Poll<futures_io::Result<usize>> {
         // TODO: actually encode trailers here.
         self.dispatch(State::EndOfStream, res, cx, buf)
     }
@@ -241,7 +238,7 @@ impl ChunkedEncoder {
         res: &mut Response,
         cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+    ) -> Poll<futures_io::Result<usize>> {
         let idx = self.bytes_written;
         // Write the final CRLF
         buf[idx] = CR;

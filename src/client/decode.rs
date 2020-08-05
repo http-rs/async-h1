@@ -1,5 +1,3 @@
-use async_std::io::{BufReader, Read};
-use async_std::prelude::*;
 use http_types::{ensure, ensure_eq, format_err};
 use http_types::{
     headers::{CONTENT_LENGTH, DATE, TRANSFER_ENCODING},
@@ -12,15 +10,19 @@ use crate::chunked::ChunkedDecoder;
 use crate::date::fmt_http_date;
 use crate::{MAX_HEADERS, MAX_HEAD_LENGTH};
 
+use futures_io::{AsyncRead, AsyncBufRead};
+use futures_util::{AsyncReadExt, AsyncBufReadExt};
+use futures_util::io::BufReader;
+
 const CR: u8 = b'\r';
 const LF: u8 = b'\n';
 
 /// Decode an HTTP response on the client.
-pub async fn decode<R>(reader: R) -> http_types::Result<Response>
+pub async fn decode<R>(mut reader: R) -> http_types::Result<Response>
 where
-    R: Read + Unpin + Send + Sync + 'static,
+    R: AsyncRead + Unpin + Send + Sync + AsyncBufRead + 'static,
 {
-    let mut reader = BufReader::new(reader);
+    //let mut reader = BufReader::new(reader);
     let mut buf = Vec::new();
     let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
     let mut httparse_res = httparse::Response::new(&mut headers);

@@ -2,14 +2,16 @@
 
 use std::pin::Pin;
 
-use async_std::io;
-use async_std::io::prelude::*;
-use async_std::task::{Context, Poll};
+//use async_std::io;
+//use async_std::io::prelude::*;
+//use async_std::task::{Context, Poll};
 use http_types::headers::{CONTENT_LENGTH, DATE, TRANSFER_ENCODING};
 use http_types::{Method, Response};
 
 use crate::chunked::ChunkedEncoder;
 use crate::date::fmt_http_date;
+use futures_io::AsyncRead;
+use futures_core::task::{Context, Poll};
 
 /// A streaming HTTP encoder.
 #[derive(Debug)]
@@ -54,15 +56,14 @@ enum State {
     End,
 }
 
-impl Read for Encoder {
+impl AsyncRead for Encoder {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+    ) -> Poll<futures_io::Result<usize>> {
         self.bytes_written = 0;
         let res = self.run(cx, buf);
-        log::trace!("ServerEncoder {} bytes written", self.bytes_written);
         res
     }
 }
@@ -90,9 +91,8 @@ impl Encoder {
         state: State,
         cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+    ) -> Poll<futures_io::Result<usize>> {
         use State::*;
-        log::trace!("ServerEncoder state: {:?} -> {:?}", self.state, state);
 
         #[cfg(debug_assertions)]
         match self.state {
@@ -109,7 +109,7 @@ impl Encoder {
     }
 
     /// Execute the right method for the current state.
-    fn run(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+    fn run(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<futures_io::Result<usize>> {
         match self.state {
             State::Start => self.dispatch(State::ComputeHead, cx, buf),
             State::ComputeHead => self.compute_head(cx, buf),
@@ -121,7 +121,7 @@ impl Encoder {
     }
 
     /// Encode the headers to a buffer, the first time we poll.
-    fn compute_head(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+    fn compute_head(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<futures_io::Result<usize>> {
         let reason = self.res.status().canonical_reason();
         let status = self.res.status();
         std::io::Write::write_fmt(
@@ -165,7 +165,7 @@ impl Encoder {
     }
 
     /// Encode the status code + headers.
-    fn encode_head(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+    fn encode_head(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<futures_io::Result<usize>> {
         // Read from the serialized headers, url and methods.
         let head_len = self.head.len();
         let len = std::cmp::min(head_len - self.head_bytes_written, buf.len());
@@ -204,7 +204,7 @@ impl Encoder {
         &mut self,
         cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+    ) -> Poll<futures_io::Result<usize>> {
         // Double check that we didn't somehow read more bytes than
         // can fit in our buffer
         debug_assert!(self.bytes_written <= buf.len());
@@ -259,7 +259,7 @@ impl Encoder {
         &mut self,
         cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+    ) -> Poll<futures_io::Result<usize>> {
         let buf = &mut buf[self.bytes_written..];
         match self.chunked.encode(&mut self.res, cx, buf) {
             Poll::Ready(Ok(read)) => {

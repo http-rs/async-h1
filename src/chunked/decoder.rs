@@ -1,13 +1,15 @@
+use std::sync::Arc;
 use std::fmt;
 use std::future::Future;
 use std::ops::Range;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use async_std::io::{self, Read};
-use async_std::sync::Arc;
+//use async_std::io::{self, Read};
+//use async_std::sync::Arc;
 use byte_pool::{Block, BytePool};
 use http_types::trailers::{Sender, Trailers};
+use futures_io::AsyncRead;
 
 const INITIAL_CAPACITY: usize = 1024 * 4;
 const MAX_CAPACITY: usize = 512 * 1024 * 1024; // 512 MiB
@@ -19,7 +21,7 @@ lazy_static::lazy_static! {
 
 /// Decodes a chunked body according to
 /// https://tools.ietf.org/html/rfc7230#section-4.1
-pub(crate) struct ChunkedDecoder<R: Read> {
+pub(crate) struct ChunkedDecoder<R: AsyncRead> {
     /// The underlying stream
     inner: R,
     /// Buffer for the already read, but not yet parsed data.
@@ -35,7 +37,7 @@ pub(crate) struct ChunkedDecoder<R: Read> {
     trailer_sender: Option<Sender>,
 }
 
-impl<R: Read> ChunkedDecoder<R> {
+impl<R: AsyncRead> ChunkedDecoder<R> {
     pub(crate) fn new(inner: R, trailer_sender: Sender) -> Self {
         ChunkedDecoder {
             inner,
@@ -48,7 +50,7 @@ impl<R: Read> ChunkedDecoder<R> {
     }
 }
 
-impl<R: Read + Unpin> ChunkedDecoder<R> {
+impl<R: AsyncRead + Unpin> ChunkedDecoder<R> {
     fn poll_read_chunk(
         &mut self,
         cx: &mut Context<'_>,
@@ -57,7 +59,7 @@ impl<R: Read + Unpin> ChunkedDecoder<R> {
         buf: &mut [u8],
         current: u64,
         len: u64,
-    ) -> io::Result<DecodeResult> {
+    ) -> futures_io::Result<DecodeResult> {
         let mut new_pos = pos.clone();
         let remaining = (len - current) as usize;
         let to_read = std::cmp::min(remaining, buf.len());
@@ -135,7 +137,7 @@ impl<R: Read + Unpin> ChunkedDecoder<R> {
         buffer: Block<'static>,
         pos: &Range<usize>,
         buf: &mut [u8],
-    ) -> io::Result<DecodeResult> {
+    ) -> futures_io::Result<DecodeResult> {
         match self.state {
             State::Init => {
                 // Initial read
@@ -198,13 +200,13 @@ impl<R: Read + Unpin> ChunkedDecoder<R> {
     }
 }
 
-impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
+impl<R: AsyncRead + Unpin> AsyncRead for ChunkedDecoder<R> {
     #[allow(missing_doc_code_examples)]
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+    ) -> Poll<futures_io::Result<usize>> {
         let this = &mut *self;
 
         let mut n = std::mem::replace(&mut this.current, 0..0);
@@ -265,8 +267,8 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
                 } else {
                     this.buffer = buffer;
                     this.current = n;
-                    return Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::Other,
+                    return Poll::Ready(Err(futures_io::Error::new(
+                        futures_io::ErrorKind::Other,
                         "incoming data too large",
                     )));
                 }
@@ -423,7 +425,7 @@ impl fmt::Debug for DecodeResult {
     }
 }
 
-fn decode_init(buffer: Block<'static>, pos: &Range<usize>) -> io::Result<DecodeResult> {
+fn decode_init(buffer: Block<'static>, pos: &Range<usize>) -> futures_io::Result<DecodeResult> {
     use httparse::Status;
     match httparse::parse_chunk_size(&buffer[pos.start..pos.end]) {
         Ok(Status::Complete((used, chunk_len))) => {
@@ -447,11 +449,11 @@ fn decode_init(buffer: Block<'static>, pos: &Range<usize>) -> io::Result<DecodeR
             })
         }
         Ok(Status::Partial) => Ok(DecodeResult::None(buffer)),
-        Err(err) => Err(io::Error::new(io::ErrorKind::Other, err.to_string())),
+        Err(err) => Err(futures_io::Error::new(futures_io::ErrorKind::Other, err.to_string())),
     }
 }
 
-fn decode_chunk_end(buffer: Block<'static>, pos: &Range<usize>) -> io::Result<DecodeResult> {
+fn decode_chunk_end(buffer: Block<'static>, pos: &Range<usize>) -> futures_io::Result<DecodeResult> {
     if pos.len() < 2 {
         return Ok(DecodeResult::None(buffer));
     }
@@ -470,10 +472,10 @@ fn decode_chunk_end(buffer: Block<'static>, pos: &Range<usize>) -> io::Result<De
         });
     }
 
-    Err(io::Error::from(io::ErrorKind::InvalidData))
+    Err(futures_io::Error::from(futures_io::ErrorKind::InvalidData))
 }
 
-fn decode_trailer(buffer: Block<'static>, pos: &Range<usize>) -> io::Result<DecodeResult> {
+fn decode_trailer(buffer: Block<'static>, pos: &Range<usize>) -> futures_io::Result<DecodeResult> {
     use httparse::Status;
 
     // read headers
@@ -498,7 +500,7 @@ fn decode_trailer(buffer: Block<'static>, pos: &Range<usize>) -> io::Result<Deco
             })
         }
         Ok(Status::Partial) => Ok(DecodeResult::None(buffer)),
-        Err(err) => Err(io::Error::new(io::ErrorKind::Other, err.to_string())),
+        Err(err) => Err(futures_io::Error::new(futures_io::ErrorKind::Other, err.to_string())),
     }
 }
 

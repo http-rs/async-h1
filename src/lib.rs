@@ -104,6 +104,7 @@ const MAX_HEADERS: usize = 128;
 /// See: https://nodejs.org/en/blog/vulnerability/november-2018-security-releases/#denial-of-service-with-large-http-headers-cve-2018-12121
 const MAX_HEAD_LENGTH: usize = 8 * 1024;
 
+mod future;
 mod chunked;
 mod date;
 
@@ -112,3 +113,5 @@ pub mod server;
 
 pub use client::connect;
 pub use server::{accept, accept_with_opts, ServerOptions};
+pub use future::TimeoutError;
+pub use http_types::{Method as HttpMethod, Request as HttpRequest, Response as HttpResponse};

@@ -1,10 +1,10 @@
-use async_std::io::{self, Read};
-use async_std::prelude::*;
-use async_std::task::{Context, Poll};
 use http_types::format_err;
 use http_types::{headers::HOST, Method, Request};
 
 use std::pin::Pin;
+use futures_util::{AsyncWriteExt};
+use futures_io::{AsyncRead};
+use futures_core::task::{Context, Poll};
 
 /// An HTTP encoder.
 #[doc(hidden)]
@@ -47,7 +47,6 @@ impl Encoder {
         }
 
         let val = format!("{} {} HTTP/1.1\r\n", req.method(), url);
-        log::trace!("> {}", &val);
         buf.write_all(val.as_bytes()).await?;
 
         if req.header(HOST).is_none() {
@@ -61,14 +60,12 @@ impl Encoder {
                 format!("host: {}\r\n", host)
             };
 
-            log::trace!("> {}", &val);
             buf.write_all(val.as_bytes()).await?;
         }
 
         // Insert Proxy-Connection header when method is CONNECT
         if req.method() == Method::Connect {
             let val = "proxy-connection: keep-alive\r\n".to_owned();
-            log::trace!("> {}", &val);
             buf.write_all(val.as_bytes()).await?;
         }
 
@@ -76,7 +73,6 @@ impl Encoder {
         // send all items in chunks.
         if let Some(len) = req.len() {
             let val = format!("content-length: {}\r\n", len);
-            log::trace!("> {}", &val);
             buf.write_all(val.as_bytes()).await?;
         } else {
             // write!(&mut buf, "Transfer-Encoding: chunked\r\n")?;
@@ -88,7 +84,6 @@ impl Encoder {
         for (header, values) in req.iter() {
             for value in values.iter() {
                 let val = format!("{}: {}\r\n", header, value);
-                log::trace!("> {}", &val);
                 buf.write_all(val.as_bytes()).await?;
             }
         }
@@ -106,12 +101,12 @@ impl Encoder {
     }
 }
 
-impl Read for Encoder {
+impl AsyncRead for Encoder {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+    ) -> Poll<futures_io::Result<usize>> {
         // Send the headers. As long as the headers aren't fully sent yet we
         // keep sending more of the headers.
         let mut bytes_read = 0;

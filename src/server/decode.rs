@@ -2,14 +2,17 @@
 
 use std::str::FromStr;
 
-use async_std::io::{BufReader, Read, Write};
-use async_std::prelude::*;
+//use async_std::io::{BufReader, Read, Write};
+//use async_std::prelude::*;
 use http_types::headers::{CONTENT_LENGTH, EXPECT, TRANSFER_ENCODING};
 use http_types::{ensure, ensure_eq, format_err};
 use http_types::{Body, Method, Request, Url};
 
 use crate::chunked::ChunkedDecoder;
 use crate::{MAX_HEADERS, MAX_HEAD_LENGTH};
+use futures_io::{AsyncRead, AsyncWrite};
+use futures_util::io::BufReader;
+use futures_util::{AsyncWriteExt, AsyncReadExt, AsyncBufReadExt};
 
 const LF: u8 = b'\n';
 
@@ -19,7 +22,7 @@ const HTTP_1_1_VERSION: u8 = 1;
 /// Decode an HTTP request on the server.
 pub async fn decode<IO>(mut io: IO) -> http_types::Result<Option<Request>>
 where
-    IO: Read + Write + Clone + Send + Sync + Unpin + 'static,
+    IO: AsyncRead + AsyncWrite + Clone + Send + Sync + Unpin + 'static,
 {
     let mut reader = BufReader::new(io.clone());
     let mut buf = Vec::new();
@@ -134,7 +137,7 @@ const EXPECT_RESPONSE: &[u8] = b"HTTP/1.1 100 Continue\r\n\r\n";
 
 async fn handle_100_continue<IO>(req: &Request, io: &mut IO) -> http_types::Result<()>
 where
-    IO: Write + Unpin,
+    IO: AsyncWrite + Unpin,
 {
     if let Some(EXPECT_HEADER_VALUE) = req.header(EXPECT).map(|h| h.as_str()) {
         io.write_all(EXPECT_RESPONSE).await?;
