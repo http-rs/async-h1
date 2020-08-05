@@ -80,3 +80,21 @@ async fn test_encode_request_with_connect() {
 
     case.assert().await;
 }
+
+// The fragment of an URL is not send to the server, see RFC7230 and RFC3986.
+#[async_std::test]
+async fn test_encode_request_with_fragment() {
+    let case = TestCase::new_client(
+        "fixtures/request-with-fragment.txt",
+        "fixtures/response-with-host.txt",
+    )
+    .await;
+
+    let url = Url::parse("http://example.com/path?query#fragment").unwrap();
+    let req = Request::new(Method::Get, url);
+
+    let res = client::connect(case.clone(), req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::Ok);
+
+    case.assert().await;
+}

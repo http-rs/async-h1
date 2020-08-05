@@ -70,6 +70,8 @@ where
 
     let mut req = Request::new(Method::from_str(method)?, url);
 
+    req.set_version(Some(http_types::Version::Http1_1));
+
     for header in httparse_req.headers.iter() {
         req.insert_header(header.name, std::str::from_utf8(header.value)?);
     }
