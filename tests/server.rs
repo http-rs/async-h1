@@ -144,3 +144,30 @@ async fn test_invalid_trailer() {
 
     assert!(case.read_result().await.is_empty());
 }
+#[async_std::test]
+async fn empty_body_for_head_requests() {
+    let case =
+        TestCase::new_server("fixtures/head_request.txt", "fixtures/head_response.txt").await;
+
+    async_h1::accept(case.clone(), |_| async { Ok("hello".into()) })
+        .await
+        .unwrap();
+
+    case.assert().await;
+}
+
+#[async_std::test]
+async fn test_req_http_version() {
+    let case = TestCase::new_server(
+        "fixtures/request-add-date.txt",
+        "fixtures/response-add-date.txt",
+    )
+    .await;
+
+    async_h1::accept(case.clone(), |req| async move {
+        assert_eq!(req.version(), Some(http_types::Version::Http1_1));
+        Ok(Response::new(StatusCode::Ok))
+    })
+    .await
+    .unwrap();
+}

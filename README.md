@@ -50,6 +50,15 @@ $ cargo add async-h1
 This crate uses ``#![forbid(unsafe_code)]`` to ensure everything is implemented in
 100% Safe Rust.
 
+## Minimum Supported Rust Version
+
+Given the rapidly-improving nature of async Rust, `async-h1` only
+guarantees it will work on the latest stable Rust compiler. Currently
+`async-h1` compiles on `rustc 1.40.0` and above, but we reserve the
+right to upgrade the minimum Rust version outside of major
+releases. If upgrading stable compiler versions is an issue we
+recommend pinning the version of `async-h1`.
+
 ## Contributing
 Want to join us? Check out our ["Contributing" guide][contributing] and take a
 look at some of these issues:
@@ -57,7 +66,7 @@ look at some of these issues:
 - [Issues labeled "good first issue"][good-first-issue]
 - [Issues labeled "help wanted"][help-wanted]
 
-[contributing]: https://github.com/http-rs/async-h1/blob/master.github/CONTRIBUTING.md
+[contributing]: https://github.com/http-rs/async-h1/blob/master/.github/CONTRIBUTING.md
 [good-first-issue]: https://github.com/http-rs/async-h1/labels/good%20first%20issue
 [help-wanted]: https://github.com/http-rs/async-h1/labels/help%20wanted
 

@@ -30,10 +30,6 @@ impl Encoder {
         let mut buf: Vec<u8> = vec![];
 
         let mut url = req.url().path().to_owned();
-        if let Some(fragment) = req.url().fragment() {
-            url.push('#');
-            url.push_str(fragment);
-        }
         if let Some(query) = req.url().query() {
             url.push('?');
             url.push_str(query);

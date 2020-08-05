@@ -74,9 +74,11 @@ where
             }
         };
 
+        let method = req.method();
         // Pass the request to the endpoint and encode the response.
         let res = endpoint(req).await?;
-        let mut encoder = Encoder::new(res);
+
+        let mut encoder = Encoder::new(res, method);
 
         // Stream the response to the writer.
         let mut ebuf = Vec::new();
