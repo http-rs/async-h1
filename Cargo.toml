@@ -1,6 +1,6 @@
 [package]
 name = "async-h1"
-version = "2.1.0"
+version = "2.1.1"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/http-rs/async-h1"
 documentation = "https://docs.rs/async-h1"
@@ -20,6 +20,8 @@ byte-pool = "0.2.1"
 lazy_static = "1.4.0"
 futures-core = "0.3.1"
 log = "0.4"
+futures-util = { version = "0.3.5", features = ["sink"] }
+futures-channel = { version = "0.3.5", features = ["sink"] }
 
 [dev-dependencies]
 pretty_assertions = "0.6.1"

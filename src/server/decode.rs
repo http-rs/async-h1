@@ -2,7 +2,7 @@
 
 use std::str::FromStr;
 
-use async_std::io::{BufReader, Read, Write};
+use async_std::io::{Read, BufReader, BufRead, Write};
 use async_std::prelude::*;
 use http_types::headers::{CONTENT_LENGTH, EXPECT, TRANSFER_ENCODING};
 use http_types::{ensure, ensure_eq, format_err};
@@ -15,6 +15,13 @@ const LF: u8 = b'\n';
 
 /// The number returned from httparse when the request is HTTP 1.1
 const HTTP_1_1_VERSION: u8 = 1;
+
+#[derive(Debug, Clone)]
+pub(crate) enum BodyType {
+    FixedLength(usize),
+    Chunked,
+    Close,
+}
 
 /// Decode an HTTP request on the server.
 pub async fn decode<IO>(mut io: IO) -> http_types::Result<Option<Request>>
@@ -70,6 +77,8 @@ where
 
     let mut req = Request::new(Method::from_str(method)?, url);
 
+    req.set_version(Some(http_types::Version::Http1_1));
+
     for header in httparse_req.headers.iter() {
         req.insert_header(header.name, std::str::from_utf8(header.value)?);
     }
@@ -102,6 +111,96 @@ where
     }
 
     Ok(Some(req))
+}
+
+/// Decode an HTTP request on the server.
+pub(crate) async fn decode_with_bufread<IO>(io: IO) -> http_types::Result<Option<(Request, BodyType)>>
+where
+    IO: BufRead + Write + Send + Sync + Unpin + 'static,
+{
+    let mut reader = io;
+    let mut buf = Vec::new();
+    let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
+    let mut httparse_req = httparse::Request::new(&mut headers);
+
+    // Keep reading bytes from the stream until we hit the end of the stream.
+    loop {
+        let bytes_read = reader.read_until(LF, &mut buf).await?;
+        // No more bytes are yielded from the stream.
+        if bytes_read == 0 {
+            return Ok(None);
+        }
+
+        // Prevent CWE-400 DDOS with large HTTP Headers.
+        ensure!(
+            buf.len() < MAX_HEAD_LENGTH,
+            "Head byte length should be less than 8kb"
+        );
+
+        // We've hit the end delimiter of the stream.
+        let idx = buf.len() - 1;
+        if idx >= 3 && &buf[idx - 3..=idx] == b"\r\n\r\n" {
+            break;
+        }
+    }
+
+    // Convert our header buf into an httparse instance, and validate.
+    let status = httparse_req.parse(&buf)?;
+
+    ensure!(!status.is_partial(), "Malformed HTTP head");
+
+    // Convert httparse headers + body into a `http_types::Request` type.
+    let method = httparse_req.method;
+    let method = method.ok_or_else(|| format_err!("No method found"))?;
+
+    let version = httparse_req.version;
+    let version = version.ok_or_else(|| format_err!("No version found"))?;
+
+    ensure_eq!(
+        version,
+        HTTP_1_1_VERSION,
+        "Unsupported HTTP version 1.{}",
+        version
+    );
+
+    let url = url_from_httparse_req(&httparse_req)?;
+
+    let mut req = Request::new(Method::from_str(method)?, url);
+
+    for header in httparse_req.headers.iter() {
+        req.insert_header(header.name, std::str::from_utf8(header.value)?);
+    }
+
+    handle_100_continue(&req, &mut reader).await?;
+
+    let content_length = req.header(CONTENT_LENGTH);
+    let transfer_encoding = req.header(TRANSFER_ENCODING);
+
+    http_types::ensure!(
+        content_length.is_none() || transfer_encoding.is_none(),
+        "Unexpected Content-Length header"
+    );
+
+    // Check for Transfer-Encoding
+    if let Some(encoding) = transfer_encoding {
+        if encoding.last().as_str() == "chunked" {
+            let trailer_sender = req.send_trailers();
+            let reader = BufReader::new(ChunkedDecoder::new(reader, trailer_sender));
+            req.set_body(Body::from_reader(reader, None));
+            return Ok(Some((req, BodyType::Chunked)));
+        }
+        // Fall through to Content-Length
+    }
+
+    // Check for Content-Length.
+    if let Some(len) = content_length {
+        let len = len.last().as_str().parse::<usize>()?;
+        req.set_body(Body::from_reader(reader.take(len as u64), Some(len)));
+        Ok(Some((req, BodyType::FixedLength(len))))
+    } else {
+        req.set_body(Body::from_reader(reader, None));
+        Ok(Some((req, BodyType::Close)))
+    }
 }
 
 fn url_from_httparse_req(req: &httparse::Request<'_, '_>) -> http_types::Result<Url> {

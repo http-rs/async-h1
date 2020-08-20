@@ -11,6 +11,21 @@ use http_types::{Method, Response};
 use crate::chunked::ChunkedEncoder;
 use crate::date::fmt_http_date;
 
+/// Additional options for Encoder
+#[derive(Debug, Clone)]
+pub struct Options {
+    /// Disables chunked encoding and allows setting the transfer-encoding header
+    pub disable_chunked_encoding: bool,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            disable_chunked_encoding: false,
+        }
+    }
+}
+
 /// A streaming HTTP encoder.
 #[derive(Debug)]
 pub struct Encoder {
@@ -36,6 +51,8 @@ pub struct Encoder {
     chunked: ChunkedEncoder,
     /// the http method that this response is in reply to
     method: Method,
+    /// Additional options
+    options: Options,
 }
 
 #[derive(Debug)]
@@ -46,8 +63,8 @@ enum State {
     ComputeHead,
     /// Stream out the HEAD section.
     EncodeHead,
-    /// Stream out a body whose length is known ahead of time.
-    EncodeFixedBody,
+    /// Stream out a body whose length may be known ahead of time.
+    EncodeBody,
     /// Stream out a body whose length is *not* know ahead of time.
     EncodeChunkedBody,
     /// Stream has ended.
@@ -70,6 +87,11 @@ impl Read for Encoder {
 impl Encoder {
     /// Create a new instance of Encoder.
     pub fn new(res: Response, method: Method) -> Self {
+        Self::new_with_options(res, method, Options::default())
+    }
+
+    /// Create a new instance of Encoder with additional options.
+    pub fn new_with_options(res: Response, method: Method, options: Options) -> Self {
         Self {
             res,
             depth: 0,
@@ -81,6 +103,7 @@ impl Encoder {
             body_bytes_written: 0,
             chunked: ChunkedEncoder::new(),
             method,
+            options,
         }
     }
 
@@ -98,8 +121,8 @@ impl Encoder {
         match self.state {
             Start => assert!(matches!(state, ComputeHead)),
             ComputeHead => assert!(matches!(state, EncodeHead)),
-            EncodeHead => assert!(matches!(state, EncodeChunkedBody | EncodeFixedBody | End)),
-            EncodeFixedBody => assert!(matches!(state, End)),
+            EncodeHead => assert!(matches!(state, EncodeChunkedBody | EncodeBody | End)),
+            EncodeBody => assert!(matches!(state, End)),
             EncodeChunkedBody => assert!(matches!(state, End)),
             End => panic!("No state transitions allowed after the ServerEncoder has ended"),
         }
@@ -114,7 +137,7 @@ impl Encoder {
             State::Start => self.dispatch(State::ComputeHead, cx, buf),
             State::ComputeHead => self.compute_head(cx, buf),
             State::EncodeHead => self.encode_head(cx, buf),
-            State::EncodeFixedBody => self.encode_fixed_body(cx, buf),
+            State::EncodeBody => self.encode_body(cx, buf),
             State::EncodeChunkedBody => self.encode_chunked_body(cx, buf),
             State::End => Poll::Ready(Ok(self.bytes_written)),
         }
@@ -131,9 +154,12 @@ impl Encoder {
 
         // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
         // send all items in chunks.
+        let disable_chunked_encoding = self.options.disable_chunked_encoding;
+        let mut content_length_set_from_body = false;
         if let Some(len) = self.res.len() {
             std::io::Write::write_fmt(&mut self.head, format_args!("content-length: {}\r\n", len))?;
-        } else {
+            content_length_set_from_body = true;
+        } else if !disable_chunked_encoding {
             std::io::Write::write_fmt(
                 &mut self.head,
                 format_args!("transfer-encoding: chunked\r\n"),
@@ -148,8 +174,8 @@ impl Encoder {
         let iter = self
             .res
             .iter()
-            .filter(|(h, _)| h != &&CONTENT_LENGTH)
-            .filter(|(h, _)| h != &&TRANSFER_ENCODING);
+            .filter(|(h, _)| h != &&CONTENT_LENGTH || !content_length_set_from_body)
+            .filter(|(h, _)| h != &&TRANSFER_ENCODING || disable_chunked_encoding);
         for (header, values) in iter {
             for value in values.iter() {
                 std::io::Write::write_fmt(
@@ -177,6 +203,7 @@ impl Encoder {
         // If we've read the total length of the head we're done
         // reading the head and can transition to reading the body
         if self.head_bytes_written == head_len {
+            // if self.method == Method::Head || !self.options.write_body {
             if self.method == Method::Head {
                 // If we are responding to a HEAD request, we MUST NOT send
                 // body content
@@ -187,9 +214,15 @@ impl Encoder {
                 match self.res.len() {
                     Some(body_len) => {
                         self.body_len = body_len;
-                        self.dispatch(State::EncodeFixedBody, cx, buf)
+                        self.dispatch(State::EncodeBody, cx, buf)
                     }
-                    None => self.dispatch(State::EncodeChunkedBody, cx, buf),
+                    None => {
+                        if self.options.disable_chunked_encoding {
+                            self.dispatch(State::EncodeBody, cx, buf)
+                        } else {
+                            self.dispatch(State::EncodeChunkedBody, cx, buf)
+                        }
+                    }
                 }
             }
         } else {
@@ -199,8 +232,8 @@ impl Encoder {
         }
     }
 
-    /// Encode the body with a known length.
-    fn encode_fixed_body(
+    /// Encode the body.
+    fn encode_body(
         &mut self,
         cx: &mut Context<'_>,
         buf: &mut [u8],
@@ -215,8 +248,11 @@ impl Encoder {
         }
 
         // Figure out how many bytes we can read.
-        let upper_bound =
-            (self.bytes_written + self.body_len - self.body_bytes_written).min(buf.len());
+        let upper_bound = if self.res.len().is_some() {
+            (self.bytes_written + self.body_len - self.body_bytes_written).min(buf.len())
+        } else {
+            buf.len()
+        };
         // Read bytes from body
         let range = self.bytes_written..upper_bound;
         let inner_poll_result = Pin::new(&mut self.res).poll_read(cx, &mut buf[range]);
@@ -231,16 +267,18 @@ impl Encoder {
         self.body_bytes_written += new_body_bytes_written;
         self.bytes_written += new_body_bytes_written;
 
-        // Double check we did not read more body bytes than the total
-        // length of the body
-        debug_assert!(
-            self.body_bytes_written <= self.body_len,
-            "Too many bytes read. Expected: {}, read: {}",
-            self.body_len,
-            self.body_bytes_written
-        );
+        if self.res.len().is_some() {
+            // Double check we did not read more body bytes than the total
+            // length of the body
+            debug_assert!(
+                self.body_bytes_written <= self.body_len,
+                "Too many bytes read. Expected: {}, read: {}",
+                self.body_len,
+                self.body_bytes_written
+            );
+        }
 
-        if self.body_len == self.body_bytes_written {
+        if self.body_len == self.body_bytes_written && self.res.len().is_some() {
             // If we've read the `len` number of bytes, end
             self.dispatch(State::End, cx, buf)
         } else if new_body_bytes_written == 0 {
@@ -249,7 +287,7 @@ impl Encoder {
             self.dispatch(State::End, cx, buf)
         } else {
             // Else continue encoding
-            self.encode_fixed_body(cx, buf)
+            self.encode_body(cx, buf)
         }
     }
 

@@ -96,6 +96,7 @@
 #![allow(clippy::len_zero)]
 #![allow(clippy::match_bool)]
 #![allow(clippy::unreadable_literal)]
+#![recursion_limit="256"]
 
 /// The maximum amount of headers parsed on the server.
 const MAX_HEADERS: usize = 128;
