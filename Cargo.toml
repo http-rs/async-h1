@@ -28,3 +28,7 @@ pretty_assertions = "0.6.1"
 async-std = { version = "1.4.0", features = ["unstable", "attributes"] }
 tempfile = "3.1.0"
 async-test = "1.0.0"
+
+[patch.crates-io]
+http-types = { git = "https://github.com/Yarn/http-types.git", rev = "4ba7c547d37f7e172e69a6bd619336e067f70103" }
+
