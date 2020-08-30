@@ -3,18 +3,22 @@
 use std::str::FromStr;
 
 use async_std::io::{BufReader, Read, Write};
-use async_std::prelude::*;
+use async_std::{prelude::*, sync, task};
 use http_types::headers::{CONTENT_LENGTH, EXPECT, TRANSFER_ENCODING};
 use http_types::{ensure, ensure_eq, format_err};
 use http_types::{Body, Method, Request, Url};
 
 use crate::chunked::ChunkedDecoder;
+use crate::read_notifier::ReadNotifier;
 use crate::{MAX_HEADERS, MAX_HEAD_LENGTH};
 
 const LF: u8 = b'\n';
 
 /// The number returned from httparse when the request is HTTP 1.1
 const HTTP_1_1_VERSION: u8 = 1;
+
+const CONTINUE_HEADER_VALUE: &str = "100-continue";
+const CONTINUE_RESPONSE: &[u8] = b"HTTP/1.1 100 Continue\r\n\r\n";
 
 /// Decode an HTTP request on the server.
 pub async fn decode<IO>(mut io: IO) -> http_types::Result<Option<Request>>
@@ -76,8 +80,6 @@ where
         req.insert_header(header.name, std::str::from_utf8(header.value)?);
     }
 
-    handle_100_continue(&req, &mut io).await?;
-
     let content_length = req.header(CONTENT_LENGTH);
     let transfer_encoding = req.header(TRANSFER_ENCODING);
 
@@ -86,11 +88,24 @@ where
         "Unexpected Content-Length header"
     );
 
+    let (sender, receiver) = sync::channel(1);
+
+    if let Some(CONTINUE_HEADER_VALUE) = req.header(EXPECT).map(|h| h.as_str()) {
+        task::spawn(async move {
+            if let Ok(()) = receiver.recv().await {
+                io.write_all(CONTINUE_RESPONSE).await.ok();
+            };
+        });
+    }
+
     // Check for Transfer-Encoding
     if let Some(encoding) = transfer_encoding {
         if encoding.last().as_str() == "chunked" {
             let trailer_sender = req.send_trailers();
-            let reader = BufReader::new(ChunkedDecoder::new(reader, trailer_sender));
+            let reader = ReadNotifier::new(
+                BufReader::new(ChunkedDecoder::new(reader, trailer_sender)),
+                sender,
+            );
             req.set_body(Body::from_reader(reader, None));
             return Ok(Some(req));
         }
@@ -100,7 +115,8 @@ where
     // Check for Content-Length.
     if let Some(len) = content_length {
         let len = len.last().as_str().parse::<usize>()?;
-        req.set_body(Body::from_reader(reader.take(len as u64), Some(len)));
+        let reader = ReadNotifier::new(reader.take(len as u64), sender);
+        req.set_body(Body::from_reader(reader, Some(len)));
     }
 
     Ok(Some(req))
@@ -127,20 +143,6 @@ fn url_from_httparse_req(req: &httparse::Request<'_, '_>) -> http_types::Result<
     } else {
         Err(format_err!("unexpected uri format"))
     }
-}
-
-const EXPECT_HEADER_VALUE: &str = "100-continue";
-const EXPECT_RESPONSE: &[u8] = b"HTTP/1.1 100 Continue\r\n\r\n";
-
-async fn handle_100_continue<IO>(req: &Request, io: &mut IO) -> http_types::Result<()>
-where
-    IO: Write + Unpin,
-{
-    if let Some(EXPECT_HEADER_VALUE) = req.header(EXPECT).map(|h| h.as_str()) {
-        io.write_all(EXPECT_RESPONSE).await?;
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -206,37 +208,5 @@ mod tests {
                 assert!(url_from_httparse_req(&req).is_err());
             },
         )
-    }
-
-    #[test]
-    fn handle_100_continue_does_nothing_with_no_expect_header() {
-        let request = Request::new(Method::Get, Url::parse("x:").unwrap());
-        let mut io = async_std::io::Cursor::new(vec![]);
-        let result = async_std::task::block_on(handle_100_continue(&request, &mut io));
-        assert_eq!(std::str::from_utf8(&io.into_inner()).unwrap(), "");
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn handle_100_continue_sends_header_if_expects_is_exactly_right() {
-        let mut request = Request::new(Method::Get, Url::parse("x:").unwrap());
-        request.append_header("expect", "100-continue");
-        let mut io = async_std::io::Cursor::new(vec![]);
-        let result = async_std::task::block_on(handle_100_continue(&request, &mut io));
-        assert_eq!(
-            std::str::from_utf8(&io.into_inner()).unwrap(),
-            "HTTP/1.1 100 Continue\r\n\r\n"
-        );
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn handle_100_continue_does_nothing_if_expects_header_is_wrong() {
-        let mut request = Request::new(Method::Get, Url::parse("x:").unwrap());
-        request.append_header("expect", "110-extensions-not-allowed");
-        let mut io = async_std::io::Cursor::new(vec![]);
-        let result = async_std::task::block_on(handle_100_continue(&request, &mut io));
-        assert_eq!(std::str::from_utf8(&io.into_inner()).unwrap(), "");
-        assert!(result.is_ok());
     }
 }
