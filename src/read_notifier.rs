@@ -1,13 +1,9 @@
-use std::{
-    fmt, io,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::fmt;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
-use async_std::{
-    io::{BufRead, Read},
-    sync::Sender,
-};
+use async_std::io::{self, BufRead, Read};
+use async_std::sync::Sender;
 
 pin_project_lite::pin_project! {
     pub(crate) struct ReadNotifier<B>{

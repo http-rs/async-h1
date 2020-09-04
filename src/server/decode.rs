@@ -102,10 +102,8 @@ where
     if let Some(encoding) = transfer_encoding {
         if encoding.last().as_str() == "chunked" {
             let trailer_sender = req.send_trailers();
-            let reader = ReadNotifier::new(
-                BufReader::new(ChunkedDecoder::new(reader, trailer_sender)),
-                sender,
-            );
+            let reader = BufReader::new(ChunkedDecoder::new(reader, trailer_sender));
+            let reader = ReadNotifier::new(reader, sender);
             req.set_body(Body::from_reader(reader, None));
             return Ok(Some(req));
         }
