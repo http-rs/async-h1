@@ -88,13 +88,22 @@ where
         "Unexpected Content-Length header"
     );
 
-    let (sender, receiver) = sync::channel(1);
+    // Establish a channel to wait for the body to be read. This
+    // allows us to avoid sending 100-continue in situations that
+    // respond without reading the body, saving clients from uploading
+    // their body.
+    let (body_read_sender, body_read_receiver) = sync::channel(1);
 
-    if let Some(CONTINUE_HEADER_VALUE) = req.header(EXPECT).map(|h| h.as_str()) {
+    if Some(CONTINUE_HEADER_VALUE) == req.header(EXPECT).map(|h| h.as_str()) {
         task::spawn(async move {
-            if let Ok(()) = receiver.recv().await {
+            // If the client expects a 100-continue header, spawn a
+            // task to wait for the first read attempt on the body.
+            if let Ok(()) = body_read_receiver.recv().await {
                 io.write_all(CONTINUE_RESPONSE).await.ok();
             };
+            // Since the sender is moved into the Body, this task will
+            // finish when the client disconnects, whether or not
+            // 100-continue was sent.
         });
     }
 
@@ -102,8 +111,9 @@ where
     if let Some(encoding) = transfer_encoding {
         if encoding.last().as_str() == "chunked" {
             let trailer_sender = req.send_trailers();
-            let reader = BufReader::new(ChunkedDecoder::new(reader, trailer_sender));
-            let reader = ReadNotifier::new(reader, sender);
+            let reader = ChunkedDecoder::new(reader, trailer_sender);
+            let reader = BufReader::new(reader);
+            let reader = ReadNotifier::new(reader, body_read_sender);
             req.set_body(Body::from_reader(reader, None));
             return Ok(Some(req));
         }
@@ -113,7 +123,7 @@ where
     // Check for Content-Length.
     if let Some(len) = content_length {
         let len = len.last().as_str().parse::<usize>()?;
-        let reader = ReadNotifier::new(reader.take(len as u64), sender);
+        let reader = ReadNotifier::new(reader.take(len as u64), body_read_sender);
         req.set_body(Body::from_reader(reader, Some(len)));
     }
 

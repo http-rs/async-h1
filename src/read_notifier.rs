@@ -6,18 +6,23 @@ use async_std::io::{self, BufRead, Read};
 use async_std::sync::Sender;
 
 pin_project_lite::pin_project! {
-    pub(crate) struct ReadNotifier<B>{
+    /// ReadNotifier forwards [`async_std::io::Read`] and
+    /// [`async_std::io::BufRead`] to an inner reader. When the
+    /// ReadNotifier is read from (using `Read`, `ReadExt`, or
+    /// `BufRead` methods), it sends a single message containing `()`
+    /// on the channel.
+    pub(crate) struct ReadNotifier<B> {
         #[pin]
         reader: B,
         sender: Sender<()>,
-        read: bool
+        has_been_read: bool
     }
 }
 
 impl<B> fmt::Debug for ReadNotifier<B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ReadNotifier")
-            .field("read", &self.read)
+            .field("read", &self.has_been_read)
             .finish()
     }
 }
@@ -27,7 +32,7 @@ impl<B: BufRead> ReadNotifier<B> {
         Self {
             reader,
             sender,
-            read: false,
+            has_been_read: false,
         }
     }
 }
@@ -50,9 +55,9 @@ impl<B: Read> Read for ReadNotifier<B> {
     ) -> Poll<io::Result<usize>> {
         let this = self.project();
 
-        if !*this.read {
+        if !*this.has_been_read {
             if let Ok(()) = this.sender.try_send(()) {
-                *this.read = true;
+                *this.has_been_read = true;
             };
         }
 
