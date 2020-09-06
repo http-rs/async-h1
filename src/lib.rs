@@ -106,6 +106,7 @@ const MAX_HEAD_LENGTH: usize = 8 * 1024;
 
 mod chunked;
 mod date;
+mod read_notifier;
 
 pub mod client;
 pub mod server;
