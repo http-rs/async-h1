@@ -209,11 +209,7 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
 
         let mut n = std::mem::replace(&mut this.current, 0..0);
         let buffer = std::mem::replace(&mut this.buffer, POOL.alloc(INITIAL_CAPACITY));
-        let mut needs_read = if let State::Chunk(_, _) = this.state {
-            false // Do not attempt to fill the buffer when we are reading a chunk
-        } else {
-            true
-        };
+        let mut needs_read = !matches!(this.state, State::Chunk(_, _));
 
         let mut buffer = if n.len() > 0 && this.initial_decode {
             // initial buffer filling, if needed
@@ -541,13 +537,13 @@ mod tests {
     #[test]
     fn test_chunked_big() {
         async_std::task::block_on(async move {
-            let mut input: Vec<u8> = "800\r\n".as_bytes().to_vec();
+            let mut input: Vec<u8> = b"800\r\n".to_vec();
             input.extend(vec![b'X'; 2048]);
-            input.extend("\r\n1800\r\n".as_bytes());
+            input.extend(b"\r\n1800\r\n");
             input.extend(vec![b'Y'; 6144]);
-            input.extend("\r\n800\r\n".as_bytes());
+            input.extend(b"\r\n800\r\n");
             input.extend(vec![b'Z'; 2048]);
-            input.extend("\r\n0\r\n\r\n".as_bytes());
+            input.extend(b"\r\n0\r\n\r\n");
 
             let (s, _r) = async_std::sync::channel(1);
             let sender = Sender::new(s);

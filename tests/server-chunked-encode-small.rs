@@ -4,7 +4,7 @@ use http_types::{Body, Response, StatusCode};
 
 mod common;
 
-const REQUEST: &'static str = concat![
+const REQUEST: &str = concat![
     "GET / HTTP/1.1\r\n",
     "host: example.com\r\n",
     "user-agent: curl/7.54.0\r\n",
@@ -12,7 +12,7 @@ const REQUEST: &'static str = concat![
     "\r\n",
 ];
 
-const TEXT: &'static str = concat![
+const TEXT: &str = concat![
     "Eveniet delectus voluptatem in placeat modi. Qui nulla sunt aut non voluptas temporibus accusamus rem. Qui soluta nisi qui accusantium excepturi voluptatem. Ab rerum maiores neque ut expedita rem.",
     "Et neque praesentium eligendi quaerat consequatur asperiores dolorem. Pariatur tempore quidem animi consequuntur voluptatem quos. Porro quo ipsa quae suscipit. Doloribus est qui facilis ratione. Delectus ex perspiciatis ab alias et quisquam non est.",
     "Id dolorum distinctio distinctio quos est facilis commodi velit. Ex repudiandae aliquam eos voluptatum et. Provident qui molestiae molestiae nostrum voluptatum aperiam ut. Quis repellendus quidem mollitia aut recusandae laboriosam.",
@@ -20,7 +20,7 @@ const TEXT: &'static str = concat![
     "Eos maxime hic aliquid accusantium. Et voluptas sit accusamus modi natus. Et voluptatem sequi ea et provident voluptatum minus voluptas. Culpa aliquam architecto consequatur animi.",
 ];
 
-const RESPONSE: &'static str = concat![
+const RESPONSE: &str = concat![
     "HTTP/1.1 200 OK\r\n",
     "transfer-encoding: chunked\r\n",
     "date: {DATE}\r\n",

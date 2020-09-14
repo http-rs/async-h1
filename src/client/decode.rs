@@ -39,10 +39,10 @@ where
 
         // We've hit the end delimiter of the stream.
         let idx = buf.len() - 1;
-        if idx >= 3 && &buf[idx - 3..=idx] == [CR, LF, CR, LF] {
+        if idx >= 3 && buf[idx - 3..=idx] == [CR, LF, CR, LF] {
             break;
         }
-        if idx >= 1 && &buf[idx - 1..=idx] == [LF, LF] {
+        if idx >= 1 && buf[idx - 1..=idx] == [LF, LF] {
             break;
         }
     }
