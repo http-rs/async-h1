@@ -148,13 +148,13 @@ impl ChunkedEncoder {
         // Each chunk is prefixed with the length of the data in hex, then a
         // CRLF, then the content, then another CRLF. Calculate how many bytes
         // each part should be.
-        let buf_len = buf.len().checked_sub(self.bytes_written).unwrap_or(0);
+        let buf_len = buf.len().saturating_sub(self.bytes_written);
         let msg_len = src.len().min(buf_len);
         // Calculate the max char count encoding the `len_prefix` statement
         // as hex would take. This is done by rounding up `log16(amt + 1)`.
         let hex_len = ((msg_len + 1) as f64).log(16.0).ceil() as usize;
         let framing_len = hex_len + CRLF_LEN * 2;
-        let buf_upper = buf_len.checked_sub(framing_len).unwrap_or(0);
+        let buf_upper = buf_len.saturating_sub(framing_len);
         let msg_len = msg_len.min(buf_upper);
         let len_prefix = format!("{:X}", msg_len).into_bytes();
 

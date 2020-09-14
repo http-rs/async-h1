@@ -135,8 +135,7 @@ fn url_from_httparse_req(req: &httparse::Request<'_, '_>) -> http_types::Result<
     let host = req
         .headers
         .iter()
-        .filter(|x| x.name.eq_ignore_ascii_case("host"))
-        .next()
+        .find(|x| x.name.eq_ignore_ascii_case("host"))
         .ok_or_else(|| format_err!("Mandatory Host header missing"))?
         .value;
 
@@ -144,7 +143,7 @@ fn url_from_httparse_req(req: &httparse::Request<'_, '_>) -> http_types::Result<
 
     if path.starts_with("http://") || path.starts_with("https://") {
         Ok(Url::parse(path)?)
-    } else if path.starts_with("/") {
+    } else if path.starts_with('/') {
         Ok(Url::parse(&format!("http://{}/", host))?.join(path)?)
     } else if req.method.unwrap().eq_ignore_ascii_case("connect") {
         Ok(Url::parse(&format!("http://{}/", path))?)
