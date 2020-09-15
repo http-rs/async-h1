@@ -3,6 +3,7 @@ host: example.com
 user-agent: curl/7.54.0
 content-type: text/plain
 transfer-encoding: chunked
+user-agent: http-rs-h1/{VERSION}
 
 7
 Mozilla

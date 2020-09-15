@@ -103,6 +103,7 @@ impl TestCase {
 
         // munge actual and expected so that we don't rely on dates matching exactly
         munge_date(&mut actual, &mut expected);
+        let expected = expected.replace("{VERSION}", env!("CARGO_PKG_VERSION"));
         pretty_assertions::assert_eq!(actual, expected);
     }
 }

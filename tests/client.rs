@@ -8,6 +8,23 @@ mod common;
 use common::TestCase;
 
 #[async_std::test]
+async fn test_default_user_agent() {
+    let case = TestCase::new_client(
+        "fixtures/request-user-agent.txt",
+        "fixtures/response-user-agent.txt",
+    )
+    .await;
+
+    let url = Url::parse("http://localhost:8080").unwrap();
+    let req = Request::new(Method::Get, url);
+
+    let res = client::connect(case.clone(), req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::Ok);
+
+    case.assert().await;
+}
+
+#[async_std::test]
 async fn test_encode_request_add_date() {
     let case = TestCase::new_client(
         "fixtures/request-add-date.txt",
