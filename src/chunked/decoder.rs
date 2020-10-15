@@ -207,6 +207,10 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
     ) -> Poll<io::Result<usize>> {
         let this = &mut *self;
 
+        if let State::Done = this.state {
+            return Poll::Ready(Ok(0));
+        }
+
         let mut n = std::mem::replace(&mut this.current, 0..0);
         let buffer = std::mem::replace(&mut this.buffer, POOL.alloc(INITIAL_CAPACITY));
         let mut needs_read = !matches!(this.state, State::Chunk(_, _));
