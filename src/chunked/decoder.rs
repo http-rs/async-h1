@@ -523,7 +523,7 @@ mod tests {
                     .as_bytes(),
             );
 
-            let (s, _r) = async_std::sync::channel(1);
+            let (s, _r) = async_channel::bounded(1);
             let sender = Sender::new(s);
             let mut decoder = ChunkedDecoder::new(input, sender);
 
@@ -549,7 +549,7 @@ mod tests {
             input.extend(vec![b'Z'; 2048]);
             input.extend(b"\r\n0\r\n\r\n");
 
-            let (s, _r) = async_std::sync::channel(1);
+            let (s, _r) = async_channel::bounded(1);
             let sender = Sender::new(s);
             let mut decoder = ChunkedDecoder::new(async_std::io::Cursor::new(input), sender);
 
@@ -579,7 +579,7 @@ mod tests {
                  \r\n"
                     .as_bytes(),
             );
-            let (s, r) = async_std::sync::channel(1);
+            let (s, r) = async_channel::bounded(1);
             let sender = Sender::new(s);
             let mut decoder = ChunkedDecoder::new(input, sender);
 
