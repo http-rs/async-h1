@@ -77,7 +77,7 @@ where
     req.set_version(Some(http_types::Version::Http1_1));
 
     for header in httparse_req.headers.iter() {
-        req.insert_header(header.name, std::str::from_utf8(header.value)?);
+        req.append_header(header.name, std::str::from_utf8(header.value)?);
     }
 
     let content_length = req.header(CONTENT_LENGTH);
