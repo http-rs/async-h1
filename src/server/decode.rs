@@ -144,7 +144,10 @@ fn url_from_httparse_req(req: &httparse::Request<'_, '_>) -> http_types::Result<
     if path.starts_with("http://") || path.starts_with("https://") {
         Ok(Url::parse(path)?)
     } else if path.starts_with('/') {
-        Ok(Url::parse(&format!("http://{}/", host))?.join(path)?)
+        let mut url = Url::parse(&format!("http://{}/", host))?;
+        // path might start with `//`, so set the path explicitly using `set_path`
+        url.set_path(path);
+        Ok(url)
     } else if req.method.unwrap().eq_ignore_ascii_case("connect") {
         Ok(Url::parse(&format!("http://{}/", path))?)
     } else {
@@ -213,6 +216,20 @@ mod tests {
             "GET not-a-url HTTP/1.1\r\nHost: server.example.com\r\n",
             |req| {
                 assert!(url_from_httparse_req(&req).is_err());
+            },
+        )
+    }
+
+    #[test]
+    fn url_for_double_slash_path() {
+        httparse_req(
+            "GET //double/slashes HTTP/1.1\r\nHost: server.example.com:443\r\n",
+            |req| {
+                let url = url_from_httparse_req(&req).unwrap();
+                assert_eq!(
+                    url.as_str(),
+                    "http://server.example.com:443//double/slashes"
+                );
             },
         )
     }
