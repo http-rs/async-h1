@@ -1,0 +1,10 @@
+[package]
+name = "wasm-test"
+version = "0.1.0"
+edition = "2018"
+publish = false
+
+[dependencies]
+async-h1 = { path = ".." }
+wasm-bindgen-test = "0.3.18"
+async-std = "1.7.0"
