@@ -1,10 +1,10 @@
+use async_dup::{Arc, Mutex};
 use async_std::fs::File;
 use async_std::io::{self, Read, SeekFrom, Write};
 use async_std::path::PathBuf;
-use async_std::sync::Arc;
+use async_std::prelude::*;
 use async_std::task::{Context, Poll};
 use std::pin::Pin;
-use std::sync::Mutex;
 
 #[derive(Debug, Copy, Clone)]
 #[allow(dead_code)]
@@ -72,22 +72,17 @@ impl TestCase {
     }
 
     #[allow(dead_code)]
-    pub async fn read_result(&self) -> String {
-        use async_std::prelude::*;
+    pub async fn read_result(&mut self) -> String {
         let mut result = String::new();
-        let mut file = self.result.lock().unwrap();
-        file.seek(SeekFrom::Start(0)).await.unwrap();
-        file.read_to_string(&mut result).await.unwrap();
+        self.result.seek(SeekFrom::Start(0)).await.unwrap();
+        self.result.read_to_string(&mut result).await.unwrap();
         result
     }
 
     #[allow(dead_code)]
-    pub async fn read_expected(&self) -> String {
-        use async_std::prelude::*;
+    pub async fn read_expected(&mut self) -> String {
         let mut expected = std::string::String::new();
         self.expected_fixture
-            .lock()
-            .unwrap()
             .read_to_string(&mut expected)
             .await
             .unwrap();
@@ -95,7 +90,7 @@ impl TestCase {
     }
 
     #[allow(dead_code)]
-    pub(crate) async fn assert(self) {
+    pub(crate) async fn assert(mut self) {
         let mut actual = self.read_result().await;
         let mut expected = self.read_expected().await;
         assert!(!actual.is_empty(), "Received empty reply");
@@ -138,14 +133,14 @@ impl Read for TestCase {
 
 impl Write for TestCase {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<io::Result<usize>> {
-        Pin::new(&mut &*self.result.lock().unwrap()).poll_write(cx, buf)
+        Pin::new(&mut &*self.result).poll_write(cx, buf)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        Pin::new(&mut &*self.result.lock().unwrap()).poll_flush(cx)
+        Pin::new(&mut &*self.result).poll_flush(cx)
     }
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        Pin::new(&mut &*self.result.lock().unwrap()).poll_close(cx)
+        Pin::new(&mut &*self.result).poll_close(cx)
     }
 }
