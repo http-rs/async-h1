@@ -122,7 +122,7 @@ async fn test_unexpected_eof() {
 
 #[async_std::test]
 async fn test_invalid_trailer() {
-    let case = TestCase::new_server(
+    let mut case = TestCase::new_server(
         "fixtures/request-invalid-trailer.txt",
         "fixtures/response-invalid-trailer.txt",
     )
