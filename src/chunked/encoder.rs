@@ -9,7 +9,6 @@ use futures_core::ready;
 #[derive(Debug)]
 pub(crate) struct ChunkedEncoder<R> {
     reader: R,
-    overflow: Vec<u8>,
     done: bool,
 }
 
@@ -18,7 +17,6 @@ impl<R: Read + Unpin> ChunkedEncoder<R> {
     pub(crate) fn new(reader: R) -> Self {
         Self {
             reader,
-            overflow: vec![],
             done: false,
         }
     }
