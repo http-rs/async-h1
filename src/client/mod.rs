@@ -14,7 +14,7 @@ pub async fn connect<RW>(mut stream: RW, req: Request) -> http_types::Result<Res
 where
     RW: Read + Write + Send + Sync + Unpin + 'static,
 {
-    let mut req = Encoder::encode(req).await?;
+    let mut req = Encoder::new(req);
     log::trace!("> {:?}", &req);
 
     io::copy(&mut req, &mut stream).await?;
