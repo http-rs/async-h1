@@ -1,108 +1,106 @@
-use async_std::io::{self, Read};
-use async_std::prelude::*;
-use async_std::task::{Context, Poll};
-use http_types::format_err;
-use http_types::{headers::HOST, Method, Request};
-
+use std::io::Write;
 use std::pin::Pin;
+
+use async_std::io::{self, Cursor, Read};
+use async_std::task::{Context, Poll};
+use http_types::headers::{CONTENT_LENGTH, HOST, TRANSFER_ENCODING};
+use http_types::{Method, Request};
+
+use crate::body_encoder::BodyEncoder;
+use crate::read_to_end;
+use crate::EncoderState;
 
 /// An HTTP encoder.
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct Encoder {
-    /// Keep track how far we've indexed into the headers + body.
-    cursor: usize,
-    /// HTTP headers to be sent.
-    headers: Vec<u8>,
-    /// Check whether we're done sending headers.
-    headers_done: bool,
-    /// Request with the HTTP body to be sent.
     request: Request,
-    /// Check whether we're done with the body.
-    body_done: bool,
-    /// Keep track of how many bytes have been read from the body stream.
-    body_bytes_read: usize,
+    state: EncoderState,
 }
 
 impl Encoder {
-    /// Encode an HTTP request on the client.
-    pub async fn encode(req: Request) -> http_types::Result<Self> {
-        let mut buf: Vec<u8> = vec![];
-
-        let mut url = req.url().path().to_owned();
-        if let Some(query) = req.url().query() {
-            url.push('?');
-            url.push_str(query);
+    /// build a new client encoder
+    pub fn new(request: Request) -> Self {
+        Self {
+            request,
+            state: EncoderState::Start,
         }
+    }
 
-        // A client sending a CONNECT request MUST consists of only the host
-        // name and port number of the tunnel destination, separated by a colon.
-        // See: https://tools.ietf.org/html/rfc7231#section-4.3.6
-        if req.method() == Method::Connect {
-            let host = req.url().host_str();
-            let host = host.ok_or_else(|| format_err!("Missing hostname"))?;
-            let port = req.url().port_or_known_default();
-            let port = port.ok_or_else(|| format_err!("Missing port"))?;
-            url = format!("{}:{}", host, port);
-        }
+    fn finalize_headers(&mut self) -> io::Result<()> {
+        if self.request.header(HOST).is_none() {
+            let url = self.request.url();
+            let host = url
+                .host_str()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing hostname"))?
+                .to_owned();
 
-        let val = format!("{} {} HTTP/1.1\r\n", req.method(), url);
-        log::trace!("> {}", &val);
-        buf.write_all(val.as_bytes()).await?;
-
-        if req.header(HOST).is_none() {
-            // Insert Host header
-            // Insert host
-            let host = req.url().host_str();
-            let host = host.ok_or_else(|| format_err!("Missing hostname"))?;
-            let val = if let Some(port) = req.url().port() {
-                format!("host: {}:{}\r\n", host, port)
+            if let Some(port) = url.port() {
+                self.request
+                    .insert_header(HOST, format!("{}:{}", host, port));
             } else {
-                format!("host: {}\r\n", host)
+                self.request.insert_header(HOST, host);
             };
-
-            log::trace!("> {}", &val);
-            buf.write_all(val.as_bytes()).await?;
         }
 
         // Insert Proxy-Connection header when method is CONNECT
-        if req.method() == Method::Connect {
-            let val = "proxy-connection: keep-alive\r\n".to_owned();
-            log::trace!("> {}", &val);
-            buf.write_all(val.as_bytes()).await?;
+        if self.request.method() == Method::Connect {
+            self.request.insert_header("proxy-connection", "keep-alive");
         }
 
         // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
         // send all items in chunks.
-        if let Some(len) = req.len() {
-            let val = format!("content-length: {}\r\n", len);
-            log::trace!("> {}", &val);
-            buf.write_all(val.as_bytes()).await?;
+        if let Some(len) = self.request.len() {
+            self.request.insert_header(CONTENT_LENGTH, len.to_string());
         } else {
-            // write!(&mut buf, "Transfer-Encoding: chunked\r\n")?;
-            panic!("chunked encoding is not implemented yet");
-            // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Transfer-Encoding
-            //      https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Trailer
+            self.request.insert_header(TRANSFER_ENCODING, "chunked");
         }
 
-        for (header, values) in req.iter() {
-            for value in values.iter() {
-                let val = format!("{}: {}\r\n", header, value);
-                log::trace!("> {}", &val);
-                buf.write_all(val.as_bytes()).await?;
+        Ok(())
+    }
+
+    fn compute_head(&mut self) -> io::Result<Cursor<Vec<u8>>> {
+        let mut buf = Vec::with_capacity(100);
+        let url = self.request.url();
+        let method = self.request.method();
+        write!(buf, "{} ", method)?;
+
+        // A client sending a CONNECT request MUST consists of only the host
+        // name and port number of the tunnel destination, separated by a colon.
+        // See: https://tools.ietf.org/html/rfc7231#section-4.3.6
+        if method == Method::Connect {
+            let host = url
+                .host_str()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing hostname"))?;
+
+            let port = url.port_or_known_default().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Unexpected scheme with no default port",
+                )
+            })?;
+
+            write!(buf, "{}:{}", host, port)?;
+        } else {
+            write!(buf, "{}", url.path())?;
+            if let Some(query) = url.query() {
+                write!(buf, "?{}", query)?;
             }
         }
 
-        buf.write_all(b"\r\n").await?;
+        write!(buf, " HTTP/1.1\r\n")?;
 
-        Ok(Self {
-            request: req,
-            headers: buf,
-            cursor: 0,
-            headers_done: false,
-            body_done: false,
-            body_bytes_read: 0,
-        })
+        self.finalize_headers()?;
+        let mut headers = self.request.iter().collect::<Vec<_>>();
+        headers.sort_unstable_by_key(|(h, _)| if **h == HOST { "0" } else { h.as_str() });
+        for (header, values) in headers {
+            for value in values.iter() {
+                write!(buf, "{}: {}\r\n", header, value)?;
+            }
+        }
+
+        write!(buf, "\r\n")?;
+        Ok(Cursor::new(buf))
     }
 }
 
@@ -112,41 +110,22 @@ impl Read for Encoder {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        // Send the headers. As long as the headers aren't fully sent yet we
-        // keep sending more of the headers.
-        let mut bytes_read = 0;
-        if !self.headers_done {
-            let len = std::cmp::min(self.headers.len() - self.cursor, buf.len());
-            let range = self.cursor..self.cursor + len;
-            buf[0..len].copy_from_slice(&self.headers[range]);
-            self.cursor += len;
-            if self.cursor == self.headers.len() {
-                self.headers_done = true;
-            }
-            bytes_read += len;
-        }
+        loop {
+            self.state = match self.state {
+                EncoderState::Start => EncoderState::Head(self.compute_head()?),
 
-        if !self.body_done {
-            let inner_poll_result =
-                Pin::new(&mut self.request).poll_read(cx, &mut buf[bytes_read..]);
-            let n = match inner_poll_result {
-                Poll::Ready(Ok(n)) => n,
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                Poll::Pending => {
-                    if bytes_read == 0 {
-                        return Poll::Pending;
-                    } else {
-                        return Poll::Ready(Ok(bytes_read as usize));
-                    }
+                EncoderState::Head(ref mut cursor) => {
+                    read_to_end!(Pin::new(cursor).poll_read(cx, buf));
+                    EncoderState::Body(BodyEncoder::new(self.request.take_body()))
                 }
-            };
-            bytes_read += n;
-            self.body_bytes_read += n;
-            if bytes_read == 0 {
-                self.body_done = true;
+
+                EncoderState::Body(ref mut encoder) => {
+                    read_to_end!(Pin::new(encoder).poll_read(cx, buf));
+                    EncoderState::End
+                }
+
+                EncoderState::End => return Poll::Ready(Ok(0)),
             }
         }
-
-        Poll::Ready(Ok(bytes_read as usize))
     }
 }

@@ -104,6 +104,7 @@ const MAX_HEADERS: usize = 128;
 /// See: https://nodejs.org/en/blog/vulnerability/november-2018-security-releases/#denial-of-service-with-large-http-headers-cve-2018-12121
 const MAX_HEAD_LENGTH: usize = 8 * 1024;
 
+mod body_encoder;
 mod chunked;
 mod date;
 mod read_notifier;
@@ -111,5 +112,26 @@ mod read_notifier;
 pub mod client;
 pub mod server;
 
+use async_std::io::Cursor;
+use body_encoder::BodyEncoder;
 pub use client::connect;
 pub use server::{accept, accept_with_opts, ServerOptions};
+
+#[derive(Debug)]
+pub(crate) enum EncoderState {
+    Start,
+    Head(Cursor<Vec<u8>>),
+    Body(BodyEncoder),
+    End,
+}
+
+/// like ready! but early-returns the Poll<Result<usize>> early in all situations other than Ready(Ok(0))
+#[macro_export]
+macro_rules! read_to_end {
+    ($expr:expr) => {
+        match $expr {
+            Poll::Ready(Ok(0)) => (),
+            other => return other,
+        }
+    };
+}
