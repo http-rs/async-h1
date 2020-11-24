@@ -72,7 +72,7 @@ async fn server_chunked_large() -> Result<()> {
     let mut request = Request::new(Method::Post, Url::parse("http://domain.com").unwrap());
     //    request.set_body(Body::from_reader(Cursor::new(BODY), None));
     request.set_body(Body::from_string(String::from(BODY)));
-    let request_encoder = async_h1::client::Encoder::encode(request).await?;
+    let request_encoder = async_h1::client::Encoder::new(request);
 
     let request = async_h1::server::decode(Duplex::new(
         Arc::new(Mutex::new(request_encoder)),

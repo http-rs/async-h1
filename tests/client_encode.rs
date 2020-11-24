@@ -10,7 +10,7 @@ mod client_encode {
 
     async fn encode_to_string(request: Request, len: usize) -> http_types::Result<String> {
         let mut buf = vec![];
-        let mut encoder = Encoder::encode(request).await?;
+        let mut encoder = Encoder::new(request);
         loop {
             let mut inner_buf = vec![0; len];
             let bytes = encoder.read(&mut inner_buf).await?;
@@ -54,8 +54,8 @@ mod client_encode {
             vec![
                 "CONNECT example.com:443 HTTP/1.1",
                 "host: example.com",
-                "proxy-connection: keep-alive",
                 "content-length: 0",
+                "proxy-connection: keep-alive",
                 "",
                 "",
             ],
