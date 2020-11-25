@@ -3,9 +3,10 @@
 use std::time::Duration;
 
 use async_std::future::{timeout, Future, TimeoutError};
-use async_std::io::{self};
-use async_std::io::{Read, Write};
-use http_types::{Request, Response};
+use async_std::io::{self, Read, Write};
+use http_types::headers::{CONNECTION, UPGRADE};
+use http_types::upgrade::Connection;
+use http_types::{Request, Response, StatusCode};
 
 mod decode;
 mod encode;
@@ -70,14 +71,32 @@ where
             }
         };
 
+        let upgrade_requested = match (req.header(UPGRADE), req.header(CONNECTION)) {
+            (Some(_), Some(upgrade)) if upgrade.as_str().eq_ignore_ascii_case("upgrade") => true,
+            _ => false,
+        };
+
         let method = req.method();
+
         // Pass the request to the endpoint and encode the response.
-        let res = endpoint(req).await?;
+        let mut res = endpoint(req).await?;
+
+        let upgrade_provided = res.status() == StatusCode::SwitchingProtocols && res.has_upgrade();
+
+        let upgrade_sender = if upgrade_requested && upgrade_provided {
+            Some(res.send_upgrade())
+        } else {
+            None
+        };
 
         let mut encoder = Encoder::new(res, method);
 
         // Stream the response to the writer.
         io::copy(&mut encoder, &mut io).await?;
+
+        if let Some(upgrade_sender) = upgrade_sender {
+            upgrade_sender.send(Connection::new(io.clone())).await;
+        }
     }
 
     Ok(())
