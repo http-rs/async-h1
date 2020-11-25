@@ -60,7 +60,7 @@ impl Encoder {
     }
 
     fn compute_head(&mut self) -> io::Result<Cursor<Vec<u8>>> {
-        let mut buf = Vec::with_capacity(100);
+        let mut buf = Vec::with_capacity(128);
         let url = self.request.url();
         let method = self.request.method();
         write!(buf, "{} ", method)?;
