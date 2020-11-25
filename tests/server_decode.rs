@@ -36,6 +36,7 @@ hello
         assert_eq!(request.body_string().await?, "hello");
         assert_eq!(request.content_type(), Some(http_types::mime::PLAIN));
         assert_eq!(request.version(), Some(http_types::Version::Http1_1));
+        assert_eq!(request.host(), Some("localhost:8080"));
         assert_eq!(
             request.url(),
             &Url::parse("http://localhost:8080/").unwrap()
