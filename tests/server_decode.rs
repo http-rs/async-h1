@@ -8,9 +8,10 @@ mod server_decode {
     use http_types::Url;
     use pretty_assertions::assert_eq;
 
-    async fn decode_str(s: &'static str) -> Result<Option<Request>> {
+    async fn decode_lines(lines: Vec<&str>) -> Result<Option<Request>> {
+        let s = lines.join("\r\n");
         async_h1::server::decode(Duplex::new(
-            Arc::new(Mutex::new(Cursor::new(s.replace("\n", "\r\n")))),
+            Arc::new(Mutex::new(Cursor::new(s))),
             Arc::new(Mutex::new(Cursor::new(vec![]))),
         ))
         .await
@@ -18,18 +19,17 @@ mod server_decode {
 
     #[async_std::test]
     async fn post_with_body() -> Result<()> {
-        let mut request = decode_str(
-            r#"POST / HTTP/1.1
-host: localhost:8080
-content-length: 5
-content-type: text/plain;charset=utf-8
-another-header: header value
-another-header: other header value
-
-hello
-
-"#,
-        )
+        let mut request = decode_lines(vec![
+            "POST / HTTP/1.1",
+            "host: localhost:8080",
+            "content-length: 5",
+            "content-type: text/plain;charset=utf-8",
+            "another-header: header value",
+            "another-header: other header value",
+            "",
+            "hello",
+            "",
+        ])
         .await?
         .unwrap();
 
@@ -52,22 +52,21 @@ hello
 
     #[async_std::test]
     async fn chunked() -> Result<()> {
-        let mut request = decode_str(
-            r#"POST / HTTP/1.1
-host: localhost:8080
-transfer-encoding: chunked
-content-type: text/plain;charset=utf-8
-
-1
-h
-1
-e
-3
-llo
-0
-
-"#,
-        )
+        let mut request = decode_lines(vec![
+            "POST / HTTP/1.1",
+            "host: localhost:8080",
+            "transfer-encoding: chunked",
+            "content-type: text/plain;charset=utf-8",
+            "",
+            "1",
+            "h",
+            "1",
+            "e",
+            "3",
+            "llo",
+            "0",
+            "",
+        ])
         .await?
         .unwrap();
 
@@ -83,18 +82,17 @@ llo
     "#]
     #[async_std::test]
     async fn invalid_trailer() -> Result<()> {
-        let mut request = decode_str(
-            r#"GET / HTTP/1.1
-host: domain.com
-content-type: application/octet-stream
-transfer-encoding: chunked
-trailer: x-invalid
-
-0
-x-invalid: å
-
-"#,
-        )
+        let mut request = decode_lines(vec![
+            "GET / HTTP/1.1",
+            "host: domain.com",
+            "content-type: application/octet-stream",
+            "transfer-encoding: chunked",
+            "trailer: x-invalid",
+            "",
+            "0",
+            "x-invalid: å",
+            "",
+        ])
         .await?
         .unwrap();
 
@@ -105,14 +103,14 @@ x-invalid: å
 
     #[async_std::test]
     async fn unexpected_eof() -> Result<()> {
-        let mut request = decode_str(
-            r#"POST / HTTP/1.1
-host: example.com
-content-type: text/plain
-content-length: 11
-
-not 11"#,
-        )
+        let mut request = decode_lines(vec![
+            "POST / HTTP/1.1",
+            "host: example.com",
+            "content-type: text/plain",
+            "content-length: 11",
+            "",
+            "not 11",
+        ])
         .await?
         .unwrap();
 
