@@ -63,7 +63,7 @@ impl Encoder {
         }
     }
 
-    fn finalize_headers(&mut self) -> io::Result<()> {
+    fn finalize_headers(&mut self) {
         // If the body isn't streaming, we can set the content-length ahead of time. Else we need to
         // send all items in chunks.
         if let Some(len) = self.response.len() {
@@ -76,7 +76,6 @@ impl Encoder {
             let date = fmt_http_date(SystemTime::now());
             self.response.insert_header(DATE, date);
         }
-        Ok(())
     }
 
     /// Encode the headers to a buffer, the first time we poll.
@@ -86,7 +85,7 @@ impl Encoder {
         let status = self.response.status();
         write!(head, "HTTP/1.1 {} {}\r\n", status, reason)?;
 
-        self.finalize_headers()?;
+        self.finalize_headers();
         let mut headers = self.response.iter().collect::<Vec<_>>();
         headers.sort_unstable_by_key(|(h, _)| h.as_str());
         for (header, values) in headers {
