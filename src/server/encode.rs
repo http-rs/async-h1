@@ -91,7 +91,6 @@ impl Encoder {
         headers.sort_unstable_by_key(|(h, _)| h.as_str());
         for (header, values) in headers {
             for value in values.iter() {
-                eprintln!("{}: {}\r\n", header, value);
                 write!(head, "{}: {}\r\n", header, value)?;
             }
         }
