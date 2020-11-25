@@ -30,12 +30,14 @@ mod client_encode {
         assert_encoded(
             100,
             req,
-            r#"POST / HTTP/1.1
-host: localhost:8080
-content-length: 5
-content-type: text/plain;charset=utf-8
-
-hello"#,
+            vec![
+                "POST / HTTP/1.1",
+                "host: localhost:8080",
+                "content-length: 5",
+                "content-type: text/plain;charset=utf-8",
+                "",
+                "hello",
+            ],
         )
         .await;
         Ok(())
@@ -49,12 +51,14 @@ hello"#,
         assert_encoded(
             100,
             req,
-            r#"CONNECT example.com:443 HTTP/1.1
-host: example.com
-proxy-connection: keep-alive
-content-length: 0
-
-"#,
+            vec![
+                "CONNECT example.com:443 HTTP/1.1",
+                "host: example.com",
+                "proxy-connection: keep-alive",
+                "content-length: 0",
+                "",
+                "",
+            ],
         )
         .await;
 
@@ -70,21 +74,23 @@ content-length: 0
         assert_encoded(
             10,
             req,
-            r#"GET /path?query HTTP/1.1
-host: example.com
-content-length: 0
-
-"#,
+            vec![
+                "GET /path?query HTTP/1.1",
+                "host: example.com",
+                "content-length: 0",
+                "",
+                "",
+            ],
         )
         .await;
 
         Ok(())
     }
 
-    async fn assert_encoded(len: usize, req: Request, s: &str) {
+    async fn assert_encoded(len: usize, req: Request, lines: Vec<&str>) {
         assert_eq!(
             encode_to_string(req, len).await.unwrap(),
-            s.replace('\n', "\r\n"),
+            lines.join("\r\n"),
         )
     }
 
@@ -98,20 +104,21 @@ content-length: 0
         assert_encoded(
             10,
             req,
-            r#"GET /path?query HTTP/1.1
-host: example.com
-content-type: application/octet-stream
-transfer-encoding: chunked
-
-5
-hello
-5
- worl
-1
-d
-0
-
-"#,
+            vec![
+                "GET /path?query HTTP/1.1",
+                "host: example.com",
+                "content-type: application/octet-stream",
+                "transfer-encoding: chunked",
+                "",
+                "5",
+                "hello",
+                "5",
+                " worl",
+                "1",
+                "d",
+                "0",
+                "",
+            ],
         )
         .await;
 
@@ -121,16 +128,17 @@ d
         assert_encoded(
             16,
             req,
-            r#"GET /path?query HTTP/1.1
-host: example.com
-content-type: application/octet-stream
-transfer-encoding: chunked
-
-B
-hello world
-0
-
-"#,
+            vec![
+                "GET /path?query HTTP/1.1",
+                "host: example.com",
+                "content-type: application/octet-stream",
+                "transfer-encoding: chunked",
+                "",
+                "B",
+                "hello world",
+                "0",
+                "",
+            ],
         )
         .await;
 
@@ -145,22 +153,23 @@ hello world
         assert_encoded(
             32,
             req,
-            r#"GET /path?query HTTP/1.1
-host: example.com
-content-type: application/octet-stream
-transfer-encoding: chunked
-
-1A
-this response is more than
-1A
- 32 bytes long in order to
-1A
- require a second hex digi
-1
-t
-0
-
-"#,
+            vec![
+                "GET /path?query HTTP/1.1",
+                "host: example.com",
+                "content-type: application/octet-stream",
+                "transfer-encoding: chunked",
+                "",
+                "1A",
+                "this response is more than",
+                "1A",
+                " 32 bytes long in order to",
+                "1A",
+                " require a second hex digi",
+                "1",
+                "t",
+                "0",
+                "",
+            ],
         )
         .await;
 

@@ -25,7 +25,7 @@ mod server_encode {
         }
     }
 
-    async fn assert_encoded(len: usize, method: Method, response: Response, s: &str) {
+    async fn assert_encoded(len: usize, method: Method, response: Response, lines: Vec<&str>) {
         assert_eq!(
             encode_to_string(response, len, method)
                 .await
@@ -39,8 +39,8 @@ mod server_encode {
                     }
                 })
                 .collect::<Vec<_>>()
-                .join("\n"),
-            s
+                .join("\r\n"),
+            lines.join("\r\n")
         );
     }
 
@@ -52,11 +52,13 @@ mod server_encode {
             100,
             Method::Get,
             res,
-            r#"HTTP/1.1 200 OK
-content-length: 0
-date: {DATE}
-
-"#,
+            vec![
+                "HTTP/1.1 200 OK",
+                "content-length: 0",
+                "date: {DATE}",
+                "",
+                "",
+            ],
         )
         .await;
 
@@ -71,11 +73,13 @@ date: {DATE}
             100,
             Method::Get,
             res,
-            r#"HTTP/1.1 404 Not Found
-content-length: 0
-date: {DATE}
-
-"#,
+            vec![
+                "HTTP/1.1 404 Not Found",
+                "content-length: 0",
+                "date: {DATE}",
+                "",
+                "",
+            ],
         )
         .await;
 
@@ -91,20 +95,22 @@ date: {DATE}
             10,
             Method::Get,
             res,
-            r#"HTTP/1.1 200 OK
-transfer-encoding: chunked
-date: {DATE}
-content-type: application/octet-stream
-
-1
-h
-5
-ello 
-5
-world
-0
-
-"#,
+            vec![
+                "HTTP/1.1 200 OK",
+                "transfer-encoding: chunked",
+                "date: {DATE}",
+                "content-type: application/octet-stream",
+                "",
+                "1",
+                "h",
+                "5",
+                "ello ",
+                "5",
+                "world",
+                "0",
+                "",
+                "",
+            ],
         )
         .await;
         Ok(())
@@ -119,12 +125,14 @@ world
             10,
             Method::Head,
             res,
-            r#"HTTP/1.1 200 OK
-content-length: 31
-date: {DATE}
-content-type: text/plain;charset=utf-8
-
-"#,
+            vec![
+                "HTTP/1.1 200 OK",
+                "content-length: 31",
+                "date: {DATE}",
+                "content-type: text/plain;charset=utf-8",
+                "",
+                "",
+            ],
         )
         .await;
 
@@ -143,12 +151,14 @@ content-type: text/plain;charset=utf-8
             10,
             Method::Head,
             res,
-            r#"HTTP/1.1 200 OK
-transfer-encoding: chunked
-date: {DATE}
-content-type: application/octet-stream
-
-"#,
+            vec![
+                "HTTP/1.1 200 OK",
+                "transfer-encoding: chunked",
+                "date: {DATE}",
+                "content-type: application/octet-stream",
+                "",
+                "",
+            ],
         )
         .await;
 
