@@ -96,6 +96,7 @@ where
 
         if let Some(upgrade_sender) = upgrade_sender {
             upgrade_sender.send(Connection::new(io.clone())).await;
+            return Ok(());
         }
     }
 
