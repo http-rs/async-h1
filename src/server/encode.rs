@@ -81,7 +81,7 @@ impl Encoder {
 
     /// Encode the headers to a buffer, the first time we poll.
     fn compute_head(&mut self) -> io::Result<Cursor<Vec<u8>>> {
-        let mut head = Vec::with_capacity(100);
+        let mut head = Vec::with_capacity(128);
         let reason = self.response.status().canonical_reason();
         let status = self.response.status();
         write!(head, "HTTP/1.1 {} {}\r\n", status, reason)?;
