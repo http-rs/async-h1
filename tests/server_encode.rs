@@ -46,8 +46,7 @@ mod server_encode {
 
     #[async_std::test]
     async fn basic() -> Result<()> {
-        let mut res = Response::new(StatusCode::Ok);
-        res.set_body("");
+        let res = Response::new(StatusCode::Ok);
 
         assert_encoded(
             100,
@@ -56,7 +55,6 @@ mod server_encode {
             r#"HTTP/1.1 200 OK
 content-length: 0
 date: {DATE}
-content-type: text/plain;charset=utf-8
 
 "#,
         )
