@@ -40,11 +40,11 @@ impl<R: Read + Unpin> Read for ChunkedEncoder<R> {
         if self.done {
             return Poll::Ready(Ok(0));
         }
-        let mut reader = &mut self.reader;
+        let reader = &mut self.reader;
 
         let max_bytes_to_read = max_bytes_to_read(buf.len());
 
-        let bytes = ready!(Pin::new(&mut reader).poll_read(cx, &mut buf[..max_bytes_to_read]))?;
+        let bytes = ready!(Pin::new(reader).poll_read(cx, &mut buf[..max_bytes_to_read]))?;
         if bytes == 0 {
             self.done = true;
         }
