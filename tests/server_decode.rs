@@ -2,6 +2,7 @@ mod server_decode {
     use async_dup::{Arc, Mutex};
     use async_std::io::{Cursor, ReadExt};
     use duplexify::Duplex;
+    use http_types::headers::TRANSFER_ENCODING;
     use http_types::Request;
     use http_types::Result;
     use http_types::Url;
@@ -70,6 +71,7 @@ llo
         .await?
         .unwrap();
 
+        assert_eq!(request[TRANSFER_ENCODING], "chunked");
         assert_eq!(request.body_string().await?, "hello");
 
         Ok(())
