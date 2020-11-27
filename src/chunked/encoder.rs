@@ -26,9 +26,9 @@ fn max_bytes_to_read(buf_len: usize) -> usize {
     if buf_len < 6 {
         panic!("buffers of length {} are too small for this implementation. if this is a problem for you, please open an issue", buf_len);
     }
-    let max_bytes_of_hex_framing = // the maximum number of bytes that the hex representation of remaining bytes might take
-                (((buf_len - 5) as f64).log2() / 4f64).floor() as usize;
-    buf_len - 5 - max_bytes_of_hex_framing
+    // the maximum number of bytes that the hex representation of remaining bytes might take
+    let max_bytes_of_hex_framing = (((buf_len - 5) as f64).log2() / 4f64).floor();
+    buf_len - 5 - (max_bytes_of_hex_framing  as usize)
 }
 
 impl<R: Read + Unpin> Read for ChunkedEncoder<R> {
