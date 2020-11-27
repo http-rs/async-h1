@@ -29,3 +29,7 @@ async-test = "1.0.0"
 duplexify = "1.2.1"
 async-dup = "1.2.1"
 async-channel = "1.5.1"
+
+[patch.crates-io.http-types]
+git = "https://github.com/http-rs/http-types"
+branch = "stabilize-upgrade"
