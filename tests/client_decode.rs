@@ -2,11 +2,12 @@ mod client_decode {
     use async_h1::client;
     use async_std::io::Cursor;
     use http_types::headers;
+    use http_types::Response;
     use http_types::Result;
     use pretty_assertions::assert_eq;
 
-    async fn decode_lines(s: Vec<&str>) -> http_types::Result<http_types::Response> {
-        client::decode(Cursor::new(dbg!(s.join("\r\n")))).await
+    async fn decode_lines(s: Vec<&str>) -> Result<Response> {
+        client::decode(Cursor::new(s.join("\r\n"))).await
     }
 
     #[async_std::test]

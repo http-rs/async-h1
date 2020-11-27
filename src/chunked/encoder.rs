@@ -28,7 +28,58 @@ fn max_bytes_to_read(buf_len: usize) -> usize {
     }
     // the maximum number of bytes that the hex representation of remaining bytes might take
     let max_bytes_of_hex_framing = (((buf_len - 5) as f64).log2() / 4f64).floor();
-    buf_len - 5 - (max_bytes_of_hex_framing  as usize)
+    buf_len - 5 - (max_bytes_of_hex_framing as usize)
+}
+
+#[cfg(test)]
+mod test_bytes_to_read {
+    #[test]
+    fn simple_check_of_known_values() {
+        // the marked rows are the most important part of this test,
+        // and a nonobvious but intentional consequence of the
+        // implementation. in order to avoid overflowing, we must use
+        // one fewer than the available buffer bytes because
+        // increasing the read size by one byte would increase the
+        // number of framed bytes by two. This occurs when the hex
+        // representation of the content bytes increases order of
+        // magnitude (F->10, FF->100, FFF-> 1000, etc)
+        let values = vec![
+            (6, 1),       // 1
+            (7, 2),       // 2
+            (20, 15),     // F
+            (21, 15),     // F <-
+            (22, 16),     // 10
+            (23, 17),     // 11
+            (260, 254),   // FE
+            (261, 254),   // FE <-
+            (262, 255),   // FF
+            (263, 256),   // 100
+            (4100, 4093), // FFD
+            (4101, 4093), // FFD <-
+            (4102, 4094), // FFE
+            (4103, 4095), // FFF
+        ];
+
+        for (input, expected) in values {
+            let actual = super::max_bytes_to_read(input);
+            assert_eq!(
+                actual, expected,
+                "\n\nexpected max_bytes_to_read({}) to be {}, but it was {}",
+                input, expected, actual
+            );
+
+            // testing the test:
+            let used_bytes = expected + 4 + format!("{:X}", expected).len();
+            assert!(
+                used_bytes == input || used_bytes == input - 1,
+                "\n\nfor an input of {}, expected used bytes to be {} or {}, but was {}",
+                input,
+                input,
+                input - 1,
+                used_bytes
+            );
+        }
+    }
 }
 
 impl<R: Read + Unpin> Read for ChunkedEncoder<R> {
