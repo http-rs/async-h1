@@ -22,6 +22,33 @@ impl<R: Read + Unpin> ChunkedEncoder<R> {
     }
 }
 
+impl<R: Read + Unpin> Read for ChunkedEncoder<R> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        if self.done {
+            return Poll::Ready(Ok(0));
+        }
+        let reader = &mut self.reader;
+
+        let max_bytes_to_read = max_bytes_to_read(buf.len());
+
+        let bytes = ready!(Pin::new(reader).poll_read(cx, &mut buf[..max_bytes_to_read]))?;
+        if bytes == 0 {
+            self.done = true;
+        }
+        let start = format!("{:X}\r\n", bytes);
+        let start_length = start.as_bytes().len();
+        let total = bytes + start_length + 2;
+        buf.copy_within(..bytes, start_length);
+        buf[..start_length].copy_from_slice(start.as_bytes());
+        buf[total - 2..total].copy_from_slice(b"\r\n");
+        Poll::Ready(Ok(total))
+    }
+}
+
 fn max_bytes_to_read(buf_len: usize) -> usize {
     if buf_len < 6 {
         // the minimum read size is of 6 represents one byte of
@@ -87,32 +114,5 @@ mod test_bytes_to_read {
                 used_bytes
             );
         }
-    }
-}
-
-impl<R: Read + Unpin> Read for ChunkedEncoder<R> {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
-        if self.done {
-            return Poll::Ready(Ok(0));
-        }
-        let reader = &mut self.reader;
-
-        let max_bytes_to_read = max_bytes_to_read(buf.len());
-
-        let bytes = ready!(Pin::new(reader).poll_read(cx, &mut buf[..max_bytes_to_read]))?;
-        if bytes == 0 {
-            self.done = true;
-        }
-        let start = format!("{:X}\r\n", bytes);
-        let start_length = start.as_bytes().len();
-        let total = bytes + start_length + 2;
-        buf.copy_within(..bytes, start_length);
-        buf[..start_length].copy_from_slice(start.as_bytes());
-        buf[total - 2..total].copy_from_slice(b"\r\n");
-        Poll::Ready(Ok(total))
     }
 }
