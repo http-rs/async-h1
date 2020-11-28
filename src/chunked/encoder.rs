@@ -24,11 +24,18 @@ impl<R: Read + Unpin> ChunkedEncoder<R> {
 
 fn max_bytes_to_read(buf_len: usize) -> usize {
     if buf_len < 6 {
+        // the minimum read size is of 6 represents one byte of
+        // content from the body. the other five bytes are 1\r\n_\r\n
+        // where _ is the actual content in question
         panic!("buffers of length {} are too small for this implementation. if this is a problem for you, please open an issue", buf_len);
     }
+
+    let bytes_remaining_after_two_cr_lns = (buf_len - 4) as f64;
+
     // the maximum number of bytes that the hex representation of remaining bytes might take
-    let max_bytes_of_hex_framing = (((buf_len - 5) as f64).log2() / 4f64).floor();
-    buf_len - 5 - (max_bytes_of_hex_framing as usize)
+    let max_bytes_of_hex_framing = bytes_remaining_after_two_cr_lns.log2() / 4f64;
+
+    (bytes_remaining_after_two_cr_lns - max_bytes_of_hex_framing.ceil()) as usize
 }
 
 #[cfg(test)]
@@ -39,10 +46,10 @@ mod test_bytes_to_read {
         // and a nonobvious but intentional consequence of the
         // implementation. in order to avoid overflowing, we must use
         // one fewer than the available buffer bytes because
-        // increasing the read size by one byte would increase the
-        // number of framed bytes by two. This occurs when the hex
-        // representation of the content bytes increases order of
-        // magnitude (F->10, FF->100, FFF-> 1000, etc)
+        // increasing the read size increase the number of framed
+        // bytes by two. This occurs when the hex representation of
+        // the content bytes is near an increase in order of magnitude
+        // (F->10, FF->100, FFF-> 1000, etc)
         let values = vec![
             (6, 1),       // 1
             (7, 2),       // 2
@@ -52,12 +59,13 @@ mod test_bytes_to_read {
             (23, 17),     // 11
             (260, 254),   // FE
             (261, 254),   // FE <-
-            (262, 255),   // FF
+            (262, 255),   // FF <-
             (263, 256),   // 100
             (4100, 4093), // FFD
             (4101, 4093), // FFD <-
-            (4102, 4094), // FFE
-            (4103, 4095), // FFF
+            (4102, 4094), // FFE <-
+            (4103, 4095), // FFF <-
+            (4104, 4096), // 1000
         ];
 
         for (input, expected) in values {
