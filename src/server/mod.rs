@@ -71,10 +71,13 @@ where
             }
         };
 
-        let upgrade_requested = match (req.header(UPGRADE), req.header(CONNECTION)) {
-            (Some(_), Some(upgrade)) if upgrade.as_str().eq_ignore_ascii_case("upgrade") => true,
-            _ => false,
-        };
+        let has_upgrade_header = req.header(UPGRADE).is_some();
+        let connection_header_is_upgrade = req
+            .header(CONNECTION)
+            .map(|connection| connection.as_str().eq_ignore_ascii_case("upgrade"))
+            .unwrap_or(false);
+
+        let upgrade_requested = has_upgrade_header && connection_header_is_upgrade;
 
         let method = req.method();
 
