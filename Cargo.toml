@@ -6,7 +6,13 @@ repository = "https://github.com/http-rs/async-h1"
 documentation = "https://docs.rs/async-h1"
 description = "Asynchronous HTTP 1.1 parser."
 keywords = ["async", "http", "stream", "parser", "http1"]
-categories = ["asynchronous", "parser-implementations", "web-programming", "web-programming::http-client", "web-programming::http-server"]
+categories = [
+  "asynchronous",
+  "parser-implementations",
+  "web-programming",
+  "web-programming::http-client",
+  "web-programming::http-server"
+]
 authors = ["Yoshua Wuyts <yoshuawuyts@gmail.com>"]
 readme = "README.md"
 edition = "2018"
@@ -32,4 +38,4 @@ async-channel = "1.5.1"
 
 [patch.crates-io.http-types]
 git = "https://github.com/http-rs/http-types"
-branch = "stabilize-upgrade"
+branch = "main"
