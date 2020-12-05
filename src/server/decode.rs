@@ -145,20 +145,7 @@ fn url_from_httparse_req(req: &httparse::Request<'_, '_>) -> http_types::Result<
     if path_and_query.starts_with("http://") || path_and_query.starts_with("https://") {
         Ok(Url::parse(path_and_query)?)
     } else if path_and_query.starts_with('/') {
-        let mut url = Url::parse(&format!("http://{}/", host))?;
-        // path might start with `//`, so set the path explicitly using `set_path`
-
-        let mut split = path_and_query.split("?");
-        if let Some(path) = split.next() {
-            url.set_path(path);
-        } else {
-            return Err(format_err!("unexpected uri format"));
-        }
-        if let Some(query) = split.next() {
-            url.set_query(Some(query));
-        }
-
-        Ok(url)
+        Ok(Url::parse(&format!("http://{}{}", host, path_and_query))?)
     } else if req.method.unwrap().eq_ignore_ascii_case("connect") {
         Ok(Url::parse(&format!("http://{}/", path_and_query))?)
     } else {
@@ -244,6 +231,19 @@ mod tests {
             },
         )
     }
+    #[test]
+    fn url_for_triple_slash_path() {
+        httparse_req(
+            "GET ///triple/slashes HTTP/1.1\r\nHost: server.example.com:443\r\n",
+            |req| {
+                let url = url_from_httparse_req(&req).unwrap();
+                assert_eq!(
+                    url.as_str(),
+                    "http://server.example.com:443///triple/slashes"
+                );
+            },
+        )
+    }
 
     #[test]
     fn url_for_query() {
@@ -252,6 +252,20 @@ mod tests {
             |req| {
                 let url = url_from_httparse_req(&req).unwrap();
                 assert_eq!(url.as_str(), "http://server.example.com:443/foo?bar=1");
+            },
+        )
+    }
+
+    #[test]
+    fn url_for_anchor() {
+        httparse_req(
+            "GET /foo?bar=1#anchor HTTP/1.1\r\nHost: server.example.com:443\r\n",
+            |req| {
+                let url = url_from_httparse_req(&req).unwrap();
+                assert_eq!(
+                    url.as_str(),
+                    "http://server.example.com:443/foo?bar=1#anchor"
+                );
             },
         )
     }
