@@ -131,7 +131,7 @@ where
 }
 
 fn url_from_httparse_req(req: &httparse::Request<'_, '_>) -> http_types::Result<Url> {
-    let path_and_query = req.path.ok_or_else(|| format_err!("No uri found"))?;
+    let path = req.path.ok_or_else(|| format_err!("No uri found"))?;
 
     let host = req
         .headers
@@ -142,12 +142,12 @@ fn url_from_httparse_req(req: &httparse::Request<'_, '_>) -> http_types::Result<
 
     let host = std::str::from_utf8(host)?;
 
-    if path_and_query.starts_with("http://") || path_and_query.starts_with("https://") {
-        Ok(Url::parse(path_and_query)?)
-    } else if path_and_query.starts_with('/') {
-        Ok(Url::parse(&format!("http://{}{}", host, path_and_query))?)
+    if path.starts_with("http://") || path.starts_with("https://") {
+        Ok(Url::parse(path)?)
+    } else if path.starts_with('/') {
+        Ok(Url::parse(&format!("http://{}{}", host, path))?)
     } else if req.method.unwrap().eq_ignore_ascii_case("connect") {
-        Ok(Url::parse(&format!("http://{}/", path_and_query))?)
+        Ok(Url::parse(&format!("http://{}/", path))?)
     } else {
         Err(format_err!("unexpected uri format"))
     }
