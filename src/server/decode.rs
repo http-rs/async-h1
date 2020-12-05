@@ -131,7 +131,8 @@ where
 }
 
 fn url_from_httparse_req(req: &httparse::Request<'_, '_>) -> http_types::Result<Url> {
-    let path = req.path.ok_or_else(|| format_err!("No uri found"))?;
+    let path_and_query = req.path.ok_or_else(|| format_err!("No uri found"))?;
+
     let host = req
         .headers
         .iter()
@@ -141,15 +142,25 @@ fn url_from_httparse_req(req: &httparse::Request<'_, '_>) -> http_types::Result<
 
     let host = std::str::from_utf8(host)?;
 
-    if path.starts_with("http://") || path.starts_with("https://") {
-        Ok(Url::parse(path)?)
-    } else if path.starts_with('/') {
+    if path_and_query.starts_with("http://") || path_and_query.starts_with("https://") {
+        Ok(Url::parse(path_and_query)?)
+    } else if path_and_query.starts_with('/') {
         let mut url = Url::parse(&format!("http://{}/", host))?;
         // path might start with `//`, so set the path explicitly using `set_path`
-        url.set_path(path);
+
+        let mut split = path_and_query.split("?");
+        if let Some(path) = split.next() {
+            url.set_path(path);
+        } else {
+            return Err(format_err!("unexpected uri format"));
+        }
+        if let Some(query) = split.next() {
+            url.set_query(Some(query));
+        }
+
         Ok(url)
     } else if req.method.unwrap().eq_ignore_ascii_case("connect") {
-        Ok(Url::parse(&format!("http://{}/", path))?)
+        Ok(Url::parse(&format!("http://{}/", path_and_query))?)
     } else {
         Err(format_err!("unexpected uri format"))
     }
@@ -230,6 +241,17 @@ mod tests {
                     url.as_str(),
                     "http://server.example.com:443//double/slashes"
                 );
+            },
+        )
+    }
+
+    #[test]
+    fn url_for_query() {
+        httparse_req(
+            "GET /foo?bar=1 HTTP/1.1\r\nHost: server.example.com:443\r\n",
+            |req| {
+                let url = url_from_httparse_req(&req).unwrap();
+                assert_eq!(url.as_str(), "http://server.example.com:443/foo?bar=1");
             },
         )
     }
