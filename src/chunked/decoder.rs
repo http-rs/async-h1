@@ -505,6 +505,7 @@ fn decode_trailer(buffer: Block<'static>, pos: &Range<usize>) -> io::Result<Deco
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_std::channel;
     use async_std::prelude::*;
 
     #[test]
@@ -523,7 +524,7 @@ mod tests {
                     .as_bytes(),
             );
 
-            let (s, _r) = async_channel::bounded(1);
+            let (s, _r) = channel::bounded(1);
             let sender = Sender::new(s);
             let mut decoder = ChunkedDecoder::new(input, sender);
 
@@ -549,7 +550,7 @@ mod tests {
             input.extend(vec![b'Z'; 2048]);
             input.extend(b"\r\n0\r\n\r\n");
 
-            let (s, _r) = async_channel::bounded(1);
+            let (s, _r) = channel::bounded(1);
             let sender = Sender::new(s);
             let mut decoder = ChunkedDecoder::new(async_std::io::Cursor::new(input), sender);
 
@@ -579,7 +580,7 @@ mod tests {
                  \r\n"
                     .as_bytes(),
             );
-            let (s, r) = async_channel::bounded(1);
+            let (s, r) = channel::bounded(1);
             let sender = Sender::new(s);
             let mut decoder = ChunkedDecoder::new(input, sender);
 
