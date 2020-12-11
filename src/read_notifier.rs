@@ -2,8 +2,8 @@ use std::fmt;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use async_channel::Sender;
 use async_std::io::{self, BufRead, Read};
-use async_std::sync::Sender;
 
 /// ReadNotifier forwards [`async_std::io::Read`] and
 /// [`async_std::io::BufRead`] to an inner reader. When the
