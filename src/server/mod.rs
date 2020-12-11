@@ -54,54 +54,57 @@ where
     F: Fn(Request) -> Fut,
     Fut: Future<Output = http_types::Result<Response>>,
 {
-    loop {
-        // Decode a new request, timing out if this takes longer than the timeout duration.
-        let fut = decode(io.clone());
+    // Decode a new request, timing out if this takes longer than the timeout duration.
+    let fut = decode(io.clone());
 
-        let req = if let Some(timeout_duration) = opts.headers_timeout {
-            match timeout(timeout_duration, fut).await {
-                Ok(Ok(Some(r))) => r,
-                Ok(Ok(None)) | Err(TimeoutError { .. }) => break, /* EOF or timeout */
-                Ok(Err(e)) => return Err(e),
+    let req = if let Some(timeout_duration) = opts.headers_timeout {
+        match timeout(timeout_duration, fut).await {
+            Ok(Ok(Some(r))) => r,
+            Ok(Ok(None)) => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "eof").into()),
+            Err(TimeoutError { .. }) => {
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "timed out").into())
             }
-        } else {
-            match fut.await? {
-                Some(r) => r,
-                None => break, /* EOF */
-            }
-        };
-
-        let has_upgrade_header = req.header(UPGRADE).is_some();
-        let connection_header_is_upgrade = req
-            .header(CONNECTION)
-            .map(|connection| connection.as_str().eq_ignore_ascii_case("upgrade"))
-            .unwrap_or(false);
-
-        let upgrade_requested = has_upgrade_header && connection_header_is_upgrade;
-
-        let method = req.method();
-
-        // Pass the request to the endpoint and encode the response.
-        let mut res = endpoint(req).await?;
-
-        let upgrade_provided = res.status() == StatusCode::SwitchingProtocols && res.has_upgrade();
-
-        let upgrade_sender = if upgrade_requested && upgrade_provided {
-            Some(res.send_upgrade())
-        } else {
-            None
-        };
-
-        let mut encoder = Encoder::new(res, method);
-
-        // Stream the response to the writer.
-        io::copy(&mut encoder, &mut io).await?;
-
-        if let Some(upgrade_sender) = upgrade_sender {
-            upgrade_sender.send(Connection::new(io.clone())).await;
-            return Ok(());
+            Ok(Err(e)) => return Err(e),
         }
-    }
+    } else {
+        match fut.await? {
+            Some(r) => r,
+            None => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "eof").into()),
+        }
+    };
 
+    let has_upgrade_header = req.header(UPGRADE).is_some();
+    let connection_header = req.header(CONNECTION).map(|c| c.as_str());
+
+    let connection_header_is_upgrade = connection_header
+        .map(|connection| connection.eq_ignore_ascii_case("upgrade"))
+        .unwrap_or(false);
+
+    let upgrade_requested = has_upgrade_header && connection_header_is_upgrade;
+
+    let method = req.method();
+
+    // Pass the request to the endpoint and encode the response.
+    let mut res = endpoint(req).await?;
+
+    res.remove_header(CONNECTION);
+    res.insert_header(CONNECTION, "close");
+
+    let upgrade_provided = res.status() == StatusCode::SwitchingProtocols && res.has_upgrade();
+
+    let upgrade_sender = if upgrade_requested && upgrade_provided {
+        Some(res.send_upgrade())
+    } else {
+        None
+    };
+
+    let mut encoder = Encoder::new(res, method);
+
+    // Stream the response to the writer.
+    io::copy(&mut encoder, &mut io).await?;
+
+    if let Some(upgrade_sender) = upgrade_sender {
+        upgrade_sender.send(Connection::new(io.clone())).await;
+    }
     Ok(())
 }
