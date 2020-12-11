@@ -3,7 +3,7 @@
 use std::str::FromStr;
 
 use async_std::io::{BufReader, Read, Write};
-use async_std::{prelude::*, sync, task};
+use async_std::{channel, prelude::*, task};
 use http_types::headers::{CONTENT_LENGTH, EXPECT, TRANSFER_ENCODING};
 use http_types::{ensure, ensure_eq, format_err};
 use http_types::{Body, Method, Request, Url};
@@ -92,7 +92,7 @@ where
     // allows us to avoid sending 100-continue in situations that
     // respond without reading the body, saving clients from uploading
     // their body.
-    let (body_read_sender, body_read_receiver) = sync::channel(1);
+    let (body_read_sender, body_read_receiver) = channel::bounded(1);
 
     if Some(CONTINUE_HEADER_VALUE) == req.header(EXPECT).map(|h| h.as_str()) {
         task::spawn(async move {
