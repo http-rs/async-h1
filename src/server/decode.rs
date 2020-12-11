@@ -85,8 +85,9 @@ where
     let content_length = req.header(CONTENT_LENGTH);
     let transfer_encoding = req.header(TRANSFER_ENCODING);
 
-    http_types::ensure!(
+    http_types::ensure_status!(
         content_length.is_none() || transfer_encoding.is_none(),
+        400,
         "Unexpected Content-Length header"
     );
 
