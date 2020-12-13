@@ -26,7 +26,7 @@ impl<B> fmt::Debug for ReadNotifier<B> {
     }
 }
 
-impl<B: BufRead> ReadNotifier<B> {
+impl<B: Read> ReadNotifier<B> {
     pub(crate) fn new(reader: B, sender: Sender<()>) -> Self {
         Self {
             reader,

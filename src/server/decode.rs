@@ -2,12 +2,14 @@
 
 use std::str::FromStr;
 
+use async_dup::{Arc, Mutex};
 use async_std::io::{BufReader, Read, Write};
 use async_std::{prelude::*, task};
 use http_types::headers::{CONTENT_LENGTH, EXPECT, TRANSFER_ENCODING};
 use http_types::{ensure, ensure_eq, format_err};
 use http_types::{Body, Method, Request, Url};
 
+use super::body_reader::BodyReader;
 use crate::chunked::ChunkedDecoder;
 use crate::read_notifier::ReadNotifier;
 use crate::{MAX_HEADERS, MAX_HEAD_LENGTH};
@@ -21,7 +23,7 @@ const CONTINUE_HEADER_VALUE: &str = "100-continue";
 const CONTINUE_RESPONSE: &[u8] = b"HTTP/1.1 100 Continue\r\n\r\n";
 
 /// Decode an HTTP request on the server.
-pub async fn decode<IO>(mut io: IO) -> http_types::Result<Option<Request>>
+pub async fn decode<IO>(mut io: IO) -> http_types::Result<Option<(Request, BodyReader<IO>)>>
 where
     IO: Read + Write + Clone + Send + Sync + Unpin + 'static,
 {
@@ -108,26 +110,29 @@ where
     }
 
     // Check for Transfer-Encoding
-    if let Some(encoding) = transfer_encoding {
-        if encoding.last().as_str() == "chunked" {
-            let trailer_sender = req.send_trailers();
-            let reader = ChunkedDecoder::new(reader, trailer_sender);
-            let reader = BufReader::new(reader);
-            let reader = ReadNotifier::new(reader, body_read_sender);
-            req.set_body(Body::from_reader(reader, None));
-            return Ok(Some(req));
-        }
-        // Fall through to Content-Length
-    }
-
-    // Check for Content-Length.
-    if let Some(len) = content_length {
+    if transfer_encoding
+        .map(|te| te.as_str().eq_ignore_ascii_case("chunked"))
+        .unwrap_or(false)
+    {
+        let trailer_sender = req.send_trailers();
+        let reader = ChunkedDecoder::new(reader, trailer_sender);
+        let reader = Arc::new(Mutex::new(reader));
+        let reader_clone = reader.clone();
+        let reader = ReadNotifier::new(reader, body_read_sender);
+        let reader = BufReader::new(reader);
+        req.set_body(Body::from_reader(reader, None));
+        return Ok(Some((req, BodyReader::Chunked(reader_clone))));
+    } else if let Some(len) = content_length {
         let len = len.last().as_str().parse::<usize>()?;
-        let reader = ReadNotifier::new(reader.take(len as u64), body_read_sender);
-        req.set_body(Body::from_reader(reader, Some(len)));
+        let reader = Arc::new(Mutex::new(reader.take(len as u64)));
+        req.set_body(Body::from_reader(
+            BufReader::new(ReadNotifier::new(reader.clone(), body_read_sender)),
+            Some(len),
+        ));
+        Ok(Some((req, BodyReader::Fixed(reader))))
+    } else {
+        Ok(Some((req, BodyReader::None)))
     }
-
-    Ok(Some(req))
 }
 
 fn url_from_httparse_req(req: &httparse::Request<'_, '_>) -> http_types::Result<Url> {

@@ -1,7 +1,7 @@
+mod test_utils;
 mod server_decode {
-    use async_dup::{Arc, Mutex};
-    use async_std::io::{Cursor, ReadExt};
-    use duplexify::Duplex;
+    use super::test_utils::TestIO;
+    use async_std::io::prelude::*;
     use http_types::headers::TRANSFER_ENCODING;
     use http_types::Request;
     use http_types::Result;
@@ -10,11 +10,12 @@ mod server_decode {
 
     async fn decode_lines(lines: Vec<&str>) -> Result<Option<Request>> {
         let s = lines.join("\r\n");
-        async_h1::server::decode(Duplex::new(
-            Arc::new(Mutex::new(Cursor::new(s))),
-            Arc::new(Mutex::new(Cursor::new(vec![]))),
-        ))
-        .await
+        let (mut client, server) = TestIO::new();
+        client.write_all(s.as_bytes()).await?;
+        client.close();
+        async_h1::server::decode(server)
+            .await
+            .map(|r| r.map(|(r, _)| r))
     }
 
     #[async_std::test]

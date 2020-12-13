@@ -94,7 +94,6 @@ mod client_encode {
         )
     }
 
-    #[ignore = "this does not work yet"]
     #[async_std::test]
     async fn client_encode_chunked_body() -> Result<()> {
         let url = Url::parse("http://example.com/path?query").unwrap();
@@ -118,6 +117,7 @@ mod client_encode {
                 "d",
                 "0",
                 "",
+                "",
             ],
         )
         .await;
@@ -137,6 +137,7 @@ mod client_encode {
                 "B",
                 "hello world",
                 "0",
+                "",
                 "",
             ],
         )
@@ -168,6 +169,7 @@ mod client_encode {
                 "1",
                 "t",
                 "0",
+                "",
                 "",
             ],
         )

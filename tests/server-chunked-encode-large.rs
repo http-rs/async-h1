@@ -1,12 +1,12 @@
-use async_dup::{Arc, Mutex};
-use async_std::io::Cursor;
-use duplexify::Duplex;
+use async_h1::{client, server};
 use http_types::Body;
 use http_types::Method;
 use http_types::Request;
 use http_types::Url;
 use http_types::{Response, Result};
 use pretty_assertions::assert_eq;
+mod test_utils;
+use test_utils::TestIO;
 
 const BODY: &str = concat![
     "Et provident reprehenderit accusamus dolores et voluptates sed quia. Repellendus odit porro ut et hic molestiae. Sit autem reiciendis animi fugiat deleniti vel iste. Laborum id odio ullam ut impedit dolores. Vel aperiam dolorem voluptatibus dignissimos maxime.",
@@ -72,21 +72,18 @@ async fn server_chunked_large() -> Result<()> {
     let mut request = Request::new(Method::Post, Url::parse("http://domain.com").unwrap());
     //    request.set_body(Body::from_reader(Cursor::new(BODY), None));
     request.set_body(Body::from_string(String::from(BODY)));
-    let request_encoder = async_h1::client::Encoder::new(request);
 
-    let request = async_h1::server::decode(Duplex::new(
-        Arc::new(Mutex::new(request_encoder)),
-        Arc::new(Mutex::new(Cursor::new(vec![]))),
-    ))
-    .await?
-    .unwrap();
+    let (mut client, server) = TestIO::new();
+    async_std::io::copy(&mut client::Encoder::new(request), &mut client).await?;
+
+    let (request, _) = server::decode(server).await?.unwrap();
 
     let mut response = Response::new(200);
     response.set_body(Body::from_reader(request, None));
 
-    let response_encoder = async_h1::server::Encoder::new(response, Method::Get);
+    let response_encoder = server::Encoder::new(response, Method::Get);
 
-    let mut response = async_h1::client::decode(response_encoder).await?;
+    let mut response = client::decode(response_encoder).await?;
 
     assert_eq!(response.body_string().await?, BODY);
     Ok(())

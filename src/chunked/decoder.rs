@@ -19,7 +19,8 @@ lazy_static::lazy_static! {
 
 /// Decodes a chunked body according to
 /// https://tools.ietf.org/html/rfc7230#section-4.1
-pub(crate) struct ChunkedDecoder<R: Read> {
+#[derive(Debug)]
+pub struct ChunkedDecoder<R: Read> {
     /// The underlying stream
     inner: R,
     /// Buffer for the already read, but not yet parsed data.
