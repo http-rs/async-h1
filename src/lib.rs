@@ -81,7 +81,7 @@
 //!         let mut res = Response::new(StatusCode::Ok);
 //!         res.insert_header("Content-Type", "text/plain");
 //!         res.set_body("Hello");
-//!         Ok(res)
+//!         res
 //!     })
 //!     .await?;
 //!     Ok(())

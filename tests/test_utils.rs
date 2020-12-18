@@ -3,7 +3,7 @@ use async_h1::{
     server::{ConnectionStatus, Server},
 };
 use async_std::io::{Read, Write};
-use http_types::{Request, Response, Result};
+use http_types::{Request, Response};
 use std::{
     fmt::{Debug, Display},
     future::Future,
@@ -25,7 +25,7 @@ pub struct TestServer<F, Fut> {
 impl<F, Fut> TestServer<F, Fut>
 where
     F: Fn(Request) -> Fut,
-    Fut: Future<Output = Result<Response>>,
+    Fut: Future<Output = Response>,
 {
     #[allow(dead_code)]
     pub fn new(f: F) -> Self {
@@ -61,7 +61,7 @@ where
 impl<F, Fut> Read for TestServer<F, Fut>
 where
     F: Fn(Request) -> Fut,
-    Fut: Future<Output = Result<Response>>,
+    Fut: Future<Output = Response>,
 {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -75,7 +75,7 @@ where
 impl<F, Fut> Write for TestServer<F, Fut>
 where
     F: Fn(Request) -> Fut,
-    Fut: Future<Output = Result<Response>>,
+    Fut: Future<Output = Response>,
 {
     fn poll_write(
         self: Pin<&mut Self>,
