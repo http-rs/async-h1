@@ -5,7 +5,7 @@ use async_h1::{
 use async_std::io::{Read, Write};
 use http_types::{Request, Response, Result};
 use std::{
-    fmt::Debug,
+    fmt::{Debug, Display},
     future::Future,
     io,
     pin::Pin,
@@ -122,14 +122,16 @@ impl CloseableCursor {
         self.len() == self.cursor()
     }
 
-    pub fn to_string(&self) -> String {
-        std::str::from_utf8(&*self.data.read().unwrap())
-            .unwrap_or("not utf8")
-            .to_owned()
-    }
-
     fn close(&self) {
         *self.closed.write().unwrap() = true;
+    }
+}
+
+impl Display for CloseableCursor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let data = &*self.data.read().unwrap();
+        let s = std::str::from_utf8(data).unwrap_or("not utf8");
+        write!(f, "{}", s)
     }
 }
 

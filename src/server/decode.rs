@@ -5,7 +5,8 @@ use std::str::FromStr;
 use async_dup::{Arc, Mutex};
 use async_std::io::{BufReader, Read, Write};
 use async_std::{prelude::*, task};
-use http_types::headers::{CONTENT_LENGTH, EXPECT, TRANSFER_ENCODING};
+use http_types::content::ContentLength;
+use http_types::headers::{EXPECT, TRANSFER_ENCODING};
 use http_types::{ensure, ensure_eq, format_err};
 use http_types::{Body, Method, Request, Url};
 
@@ -82,11 +83,16 @@ where
         req.append_header(header.name, std::str::from_utf8(header.value)?);
     }
 
-    let content_length = req.header(CONTENT_LENGTH);
+    let content_length = ContentLength::from_headers(&req)?;
     let transfer_encoding = req.header(TRANSFER_ENCODING);
 
-    http_types::ensure!(
+    // Return a 400 status if both Content-Length and Transfer-Encoding headers
+    // are set to prevent request smuggling attacks.
+    //
+    // https://tools.ietf.org/html/rfc7230#section-3.3.3
+    http_types::ensure_status!(
         content_length.is_none() || transfer_encoding.is_none(),
+        400,
         "Unexpected Content-Length header"
     );
 
@@ -123,11 +129,11 @@ where
         req.set_body(Body::from_reader(reader, None));
         return Ok(Some((req, BodyReader::Chunked(reader_clone))));
     } else if let Some(len) = content_length {
-        let len = len.last().as_str().parse::<usize>()?;
-        let reader = Arc::new(Mutex::new(reader.take(len as u64)));
+        let len = len.len();
+        let reader = Arc::new(Mutex::new(reader.take(len)));
         req.set_body(Body::from_reader(
             BufReader::new(ReadNotifier::new(reader.clone(), body_read_sender)),
-            Some(len),
+            Some(len as usize),
         ));
         Ok(Some((req, BodyReader::Fixed(reader))))
     } else {
