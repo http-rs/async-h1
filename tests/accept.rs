@@ -11,7 +11,7 @@ mod accept {
             let mut response = Response::new(200);
             let len = req.len();
             response.set_body(Body::from_reader(req, len));
-            Ok(response)
+            response
         });
 
         let content_length = 10;
@@ -35,7 +35,7 @@ mod accept {
 
     #[async_std::test]
     async fn request_close() -> Result<()> {
-        let mut server = TestServer::new(|_| async { Ok(Response::new(200)) });
+        let mut server = TestServer::new(|_| async { Response::new(200) });
 
         server
             .write_all(b"GET / HTTP/1.1\r\nHost: example.com\r\nConnection: Close\r\n\r\n")
@@ -53,7 +53,7 @@ mod accept {
         let mut server = TestServer::new(|_| async {
             let mut response = Response::new(200);
             response.insert_header(CONNECTION, "close");
-            Ok(response)
+            response
         });
 
         server
@@ -69,7 +69,7 @@ mod accept {
 
     #[async_std::test]
     async fn keep_alive_short_fixed_length_unread_body() -> Result<()> {
-        let mut server = TestServer::new(|_| async { Ok(Response::new(200)) });
+        let mut server = TestServer::new(|_| async { Response::new(200) });
 
         let content_length = 10;
 
@@ -95,7 +95,7 @@ mod accept {
 
     #[async_std::test]
     async fn keep_alive_short_chunked_unread_body() -> Result<()> {
-        let mut server = TestServer::new(|_| async { Ok(Response::new(200)) });
+        let mut server = TestServer::new(|_| async { Response::new(200) });
 
         let content_length = 100;
 
@@ -125,7 +125,7 @@ mod accept {
 
     #[async_std::test]
     async fn keep_alive_long_fixed_length_unread_body() -> Result<()> {
-        let mut server = TestServer::new(|_| async { Ok(Response::new(200)) });
+        let mut server = TestServer::new(|_| async { Response::new(200) });
 
         let content_length = 10000;
 
@@ -151,7 +151,7 @@ mod accept {
 
     #[async_std::test]
     async fn keep_alive_long_chunked_unread_body() -> Result<()> {
-        let mut server = TestServer::new(|_| async { Ok(Response::new(200)) });
+        let mut server = TestServer::new(|_| async { Response::new(200) });
 
         let content_length = 10000;
 

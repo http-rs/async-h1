@@ -35,7 +35,7 @@ pub async fn accept<RW, F, Fut>(io: RW, endpoint: F) -> http_types::Result<()>
 where
     RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
     F: Fn(Request) -> Fut,
-    Fut: Future<Output = http_types::Result<Response>>,
+    Fut: Future<Output = Response>,
 {
     Server::new(io, endpoint).accept().await
 }
@@ -51,7 +51,7 @@ pub async fn accept_with_opts<RW, F, Fut>(
 where
     RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
     F: Fn(Request) -> Fut,
-    Fut: Future<Output = http_types::Result<Response>>,
+    Fut: Future<Output = Response>,
 {
     Server::new(io, endpoint).with_opts(opts).accept().await
 }
@@ -79,7 +79,7 @@ impl<RW, F, Fut> Server<RW, F, Fut>
 where
     RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
     F: Fn(Request) -> Fut,
-    Fut: Future<Output = http_types::Result<Response>>,
+    Fut: Future<Output = Response>,
 {
     /// builds a new server
     pub fn new(io: RW, endpoint: F) -> Self {
@@ -108,7 +108,7 @@ where
     where
         RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
         F: Fn(Request) -> Fut,
-        Fut: Future<Output = http_types::Result<Response>>,
+        Fut: Future<Output = Response>,
     {
         // Decode a new request, timing out if this takes longer than the timeout duration.
         let fut = decode(self.io.clone());
@@ -142,7 +142,7 @@ where
         let method = req.method();
 
         // Pass the request to the endpoint and encode the response.
-        let mut res = (self.endpoint)(req).await?;
+        let mut res = (self.endpoint)(req).await;
 
         close_connection |= res
             .header(CONNECTION)
