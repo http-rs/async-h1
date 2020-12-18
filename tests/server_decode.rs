@@ -14,9 +14,9 @@ mod server_decode {
         let (mut client, server) = TestIO::new();
         client.write_all(s.as_bytes()).await?;
         client.close();
-        async_h1::server::decode(server, &options)
+        Ok(async_h1::server::decode(server, &options)
             .await
-            .map(|r| r.map(|(r, _)| r))
+            .map(|r| r.map(|(r, _)| r))?)
     }
 
     async fn decode_lines_default(lines: Vec<&str>) -> Result<Option<Request>> {

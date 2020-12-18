@@ -64,7 +64,7 @@ impl Default for ServerOptions {
 /// Accept a new incoming HTTP/1.1 connection.
 ///
 /// Supports `KeepAlive` requests by default.
-pub async fn accept<RW, F, Fut>(io: RW, endpoint: F) -> http_types::Result<()>
+pub async fn accept<RW, F, Fut>(io: RW, endpoint: F) -> crate::Result<()>
 where
     RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
     F: Fn(Request) -> Fut,
@@ -80,7 +80,7 @@ pub async fn accept_with_opts<RW, F, Fut>(
     io: RW,
     endpoint: F,
     opts: ServerOptions,
-) -> http_types::Result<()>
+) -> crate::Result<()>
 where
     RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
     F: Fn(Request) -> Fut,
@@ -131,13 +131,13 @@ where
     }
 
     /// accept in a loop
-    pub async fn accept(&mut self) -> http_types::Result<()> {
+    pub async fn accept(&mut self) -> crate::Result<()> {
         while ConnectionStatus::KeepAlive == self.accept_one().await? {}
         Ok(())
     }
 
     /// accept one request
-    pub async fn accept_one(&mut self) -> http_types::Result<ConnectionStatus>
+    pub async fn accept_one(&mut self) -> crate::Result<ConnectionStatus>
     where
         RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
         F: Fn(Request) -> Fut,
@@ -180,22 +180,23 @@ where
         let method = req.method();
 
         // Pass the request to the endpoint and encode the response.
-        let mut res = (self.endpoint)(req).await;
+        let mut response = (self.endpoint)(req).await;
 
-        close_connection |= res
+        close_connection |= response
             .header(CONNECTION)
             .map(|c| c.as_str().eq_ignore_ascii_case("close"))
             .unwrap_or(false);
 
-        let upgrade_provided = res.status() == StatusCode::SwitchingProtocols && res.has_upgrade();
+        let upgrade_provided =
+            response.status() == StatusCode::SwitchingProtocols && response.has_upgrade();
 
         let upgrade_sender = if upgrade_requested && upgrade_provided {
-            Some(res.send_upgrade())
+            Some(response.send_upgrade())
         } else {
             None
         };
 
-        let mut encoder = Encoder::new(res, method);
+        let mut encoder = Encoder::new(response, method);
 
         let bytes_written = io::copy(&mut encoder, &mut self.io).await?;
         log::trace!("wrote {} response bytes", bytes_written);

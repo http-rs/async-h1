@@ -6,7 +6,7 @@ mod client_decode {
     use http_types::Result;
     use pretty_assertions::assert_eq;
 
-    async fn decode_lines(s: Vec<&str>) -> Result<Response> {
+    async fn decode_lines(s: Vec<&str>) -> async_h1::Result<Option<Response>> {
         client::decode(Cursor::new(s.join("\r\n"))).await
     }
 
@@ -19,7 +19,8 @@ mod client_decode {
             "",
             "",
         ])
-        .await?;
+        .await?
+        .unwrap();
 
         assert_eq!(res.header(&headers::DATE).is_some(), true);
         Ok(())
@@ -36,7 +37,8 @@ mod client_decode {
             "",
             "",
         ])
-        .await?;
+        .await?
+        .unwrap();
         assert_eq!(res.header(&headers::SET_COOKIE).unwrap().iter().count(), 2);
 
         Ok(())
@@ -53,15 +55,10 @@ mod client_decode {
             "http specifies headers are separated with \r\n but many servers don't do that",
             "",
         ])
-        .await?;
+        .await?
+        .unwrap();
 
-        assert_eq!(
-            res[headers::CONTENT_LENGTH]
-                .as_str()
-                .parse::<usize>()
-                .unwrap(),
-            78
-        );
+        assert_eq!(res[headers::CONTENT_LENGTH], "78");
 
         Ok(())
     }

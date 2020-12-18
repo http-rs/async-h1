@@ -83,7 +83,7 @@ async fn server_chunked_large() -> Result<()> {
 
     let response_encoder = server::Encoder::new(response, Method::Get);
 
-    let mut response = client::decode(response_encoder).await?;
+    let mut response = client::decode(response_encoder).await?.unwrap();
 
     assert_eq!(response.body_string().await?, BODY);
     Ok(())

@@ -116,6 +116,8 @@ use async_std::io::Cursor;
 use body_encoder::BodyEncoder;
 pub use client::connect;
 pub use server::{accept, accept_with_opts, ServerOptions};
+mod error;
+pub use error::{Error, Result};
 
 #[derive(Debug)]
 pub(crate) enum EncoderState {
