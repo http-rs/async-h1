@@ -37,7 +37,7 @@ where
     }
 
     #[allow(dead_code)]
-    pub async fn accept_one(&mut self) -> http_types::Result<ConnectionStatus> {
+    pub async fn accept_one(&mut self) -> async_h1::Result<ConnectionStatus> {
         self.server.accept_one().await
     }
 
