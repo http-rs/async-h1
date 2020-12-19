@@ -2,8 +2,11 @@
 
 use async_std::future::{timeout, Future, TimeoutError};
 use async_std::io::{self, Read, Write};
-use http_types::headers::{CONNECTION, UPGRADE};
 use http_types::upgrade::Connection;
+use http_types::{
+    headers::{CONNECTION, UPGRADE},
+    Version,
+};
 use http_types::{Request, Response, StatusCode};
 use std::{marker::PhantomData, time::Duration};
 mod body_reader;
@@ -18,12 +21,42 @@ pub use encode::Encoder;
 pub struct ServerOptions {
     /// Timeout to handle headers. Defaults to 60s.
     headers_timeout: Option<Duration>,
+    default_host: Option<String>,
+}
+
+impl ServerOptions {
+    /// constructs a new ServerOptions with default settings
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// sets the timeout by which the headers must have been received
+    pub fn with_headers_timeout(mut self, headers_timeout: Duration) -> Self {
+        self.headers_timeout = Some(headers_timeout);
+        self
+    }
+
+    /// Sets the default http 1.0 host for this server. If no host
+    /// header is provided on an http/1.0 request, this host will be
+    /// used to construct the Request Url.
+    ///
+    /// If this is not provided, the server will respond to all
+    /// http/1.0 requests with status `505 http version not
+    /// supported`, whether or not a host header is provided.
+    ///
+    /// The default value for this is None, and as a result async-h1
+    /// is by default an http-1.1-only server.
+    pub fn with_default_host(mut self, default_host: &str) -> Self {
+        self.default_host = Some(default_host.into());
+        self
+    }
 }
 
 impl Default for ServerOptions {
     fn default() -> Self {
         Self {
             headers_timeout: Some(Duration::from_secs(60)),
+            default_host: None,
         }
     }
 }
@@ -111,7 +144,7 @@ where
         Fut: Future<Output = Response>,
     {
         // Decode a new request, timing out if this takes longer than the timeout duration.
-        let fut = decode(self.io.clone());
+        let fut = decode(self.io.clone(), &self.opts);
 
         let (req, mut body) = if let Some(timeout_duration) = self.opts.headers_timeout {
             match timeout(timeout_duration, fut).await {
@@ -133,7 +166,12 @@ where
             .unwrap_or("");
 
         let connection_header_is_upgrade = connection_header_as_str.eq_ignore_ascii_case("upgrade");
-        let mut close_connection = connection_header_as_str.eq_ignore_ascii_case("close");
+
+        let mut close_connection = if req.version() == Some(Version::Http1_0) {
+            !connection_header_as_str.eq_ignore_ascii_case("keep-alive")
+        } else {
+            connection_header_as_str.eq_ignore_ascii_case("close")
+        };
 
         let upgrade_requested = has_upgrade_header && connection_header_is_upgrade;
 
@@ -168,7 +206,7 @@ where
 
         if let Some(upgrade_sender) = upgrade_sender {
             upgrade_sender.send(Connection::new(self.io.clone())).await;
-            return Ok(ConnectionStatus::Close);
+            Ok(ConnectionStatus::Close)
         } else if close_connection {
             Ok(ConnectionStatus::Close)
         } else {

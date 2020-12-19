@@ -16,7 +16,9 @@ async fn test_with_expect_when_reading_body() -> Result<()> {
     let (mut client, server) = TestIO::new();
     client.write_all(REQUEST_WITH_EXPECT).await?;
 
-    let (mut request, _) = async_h1::server::decode(server).await?.unwrap();
+    let (mut request, _) = async_h1::server::decode(server, &Default::default())
+        .await?
+        .unwrap();
 
     task::sleep(SLEEP_DURATION).await; //prove we're not just testing before we've written
 
@@ -44,7 +46,9 @@ async fn test_without_expect_when_not_reading_body() -> Result<()> {
     let (mut client, server) = TestIO::new();
     client.write_all(REQUEST_WITH_EXPECT).await?;
 
-    let (_, _) = async_h1::server::decode(server).await?.unwrap();
+    let (_, _) = async_h1::server::decode(server, &Default::default())
+        .await?
+        .unwrap();
 
     task::sleep(SLEEP_DURATION).await; // just long enough to wait for the channel
 
