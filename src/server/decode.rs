@@ -5,26 +5,29 @@ use std::str::FromStr;
 use async_dup::{Arc, Mutex};
 use async_std::io::{BufReader, Read, Write};
 use async_std::{prelude::*, task};
-use http_types::content::ContentLength;
-use http_types::headers::{EXPECT, TRANSFER_ENCODING};
-use http_types::{ensure, ensure_eq, format_err};
+use http_types::{content::ContentLength, Version};
+use http_types::{ensure, format_err};
+use http_types::{
+    headers::{EXPECT, TRANSFER_ENCODING},
+    StatusCode,
+};
 use http_types::{Body, Method, Request, Url};
 
 use super::body_reader::BodyReader;
-use crate::chunked::ChunkedDecoder;
 use crate::read_notifier::ReadNotifier;
+use crate::{chunked::ChunkedDecoder, ServerOptions};
 use crate::{MAX_HEADERS, MAX_HEAD_LENGTH};
 
 const LF: u8 = b'\n';
-
-/// The number returned from httparse when the request is HTTP 1.1
-const HTTP_1_1_VERSION: u8 = 1;
 
 const CONTINUE_HEADER_VALUE: &str = "100-continue";
 const CONTINUE_RESPONSE: &[u8] = b"HTTP/1.1 100 Continue\r\n\r\n";
 
 /// Decode an HTTP request on the server.
-pub async fn decode<IO>(mut io: IO) -> http_types::Result<Option<(Request, BodyReader<IO>)>>
+pub async fn decode<IO>(
+    mut io: IO,
+    opts: &ServerOptions,
+) -> http_types::Result<Option<(Request, BodyReader<IO>)>>
 where
     IO: Read + Write + Clone + Send + Sync + Unpin + 'static,
 {
@@ -63,21 +66,22 @@ where
     let method = httparse_req.method;
     let method = method.ok_or_else(|| format_err!("No method found"))?;
 
-    let version = httparse_req.version;
-    let version = version.ok_or_else(|| format_err!("No version found"))?;
+    let version = match (&opts.default_host, httparse_req.version) {
+        (Some(_), None) | (Some(_), Some(0)) => Version::Http1_0,
+        (_, Some(1)) => Version::Http1_1,
+        _ => {
+            let mut err = format_err!("http version not supported");
+            err.set_status(StatusCode::HttpVersionNotSupported);
+            return Err(err);
+        }
+    };
 
-    ensure_eq!(
-        version,
-        HTTP_1_1_VERSION,
-        "Unsupported HTTP version 1.{}",
-        version
-    );
-
-    let url = url_from_httparse_req(&httparse_req)?;
+    let url = url_from_httparse_req(&httparse_req, opts.default_host.as_deref())
+        .ok_or_else(|| format_err!("unable to construct url from request"))?;
 
     let mut req = Request::new(Method::from_str(method)?, url);
 
-    req.set_version(Some(http_types::Version::Http1_1));
+    req.set_version(Some(version));
 
     for header in httparse_req.headers.iter() {
         req.append_header(header.name, std::str::from_utf8(header.value)?);
@@ -141,26 +145,27 @@ where
     }
 }
 
-fn url_from_httparse_req(req: &httparse::Request<'_, '_>) -> http_types::Result<Url> {
-    let path = req.path.ok_or_else(|| format_err!("No uri found"))?;
+fn url_from_httparse_req(
+    req: &httparse::Request<'_, '_>,
+    default_host: Option<&str>,
+) -> Option<Url> {
+    let path = req.path?;
 
     let host = req
         .headers
         .iter()
         .find(|x| x.name.eq_ignore_ascii_case("host"))
-        .ok_or_else(|| format_err!("Mandatory Host header missing"))?
-        .value;
-
-    let host = std::str::from_utf8(host)?;
+        .and_then(|x| std::str::from_utf8(x.value).ok())
+        .or(default_host)?;
 
     if path.starts_with("http://") || path.starts_with("https://") {
-        Ok(Url::parse(path)?)
+        Url::parse(path).ok()
     } else if path.starts_with('/') {
-        Ok(Url::parse(&format!("http://{}{}", host, path))?)
+        Url::parse(&format!("http://{}{}", host, path)).ok()
     } else if req.method.unwrap().eq_ignore_ascii_case("connect") {
-        Ok(Url::parse(&format!("http://{}/", path))?)
+        Url::parse(&format!("http://{}/", path)).ok()
     } else {
-        Err(format_err!("unexpected uri format"))
+        None
     }
 }
 
@@ -180,7 +185,7 @@ mod tests {
         httparse_req(
             "CONNECT server.example.com:443 HTTP/1.1\r\nHost: server.example.com:443\r\n",
             |req| {
-                let url = url_from_httparse_req(&req).unwrap();
+                let url = url_from_httparse_req(&req, None).unwrap();
                 assert_eq!(url.as_str(), "http://server.example.com:443/");
             },
         );
@@ -191,7 +196,7 @@ mod tests {
         httparse_req(
             "GET /some/resource HTTP/1.1\r\nHost: server.example.com:443\r\n",
             |req| {
-                let url = url_from_httparse_req(&req).unwrap();
+                let url = url_from_httparse_req(&req, None).unwrap();
                 assert_eq!(url.as_str(), "http://server.example.com:443/some/resource");
             },
         )
@@ -202,7 +207,7 @@ mod tests {
         httparse_req(
             "GET http://domain.com/some/resource HTTP/1.1\r\nHost: server.example.com\r\n",
             |req| {
-                let url = url_from_httparse_req(&req).unwrap();
+                let url = url_from_httparse_req(&req, None).unwrap();
                 assert_eq!(url.as_str(), "http://domain.com/some/resource"); // host header MUST be ignored according to spec
             },
         )
@@ -213,7 +218,7 @@ mod tests {
         httparse_req(
             "CONNECT server.example.com:443 HTTP/1.1\r\nHost: conflicting.host\r\n",
             |req| {
-                let url = url_from_httparse_req(&req).unwrap();
+                let url = url_from_httparse_req(&req, None).unwrap();
                 assert_eq!(url.as_str(), "http://server.example.com:443/");
             },
         )
@@ -224,7 +229,7 @@ mod tests {
         httparse_req(
             "GET not-a-url HTTP/1.1\r\nHost: server.example.com\r\n",
             |req| {
-                assert!(url_from_httparse_req(&req).is_err());
+                assert!(url_from_httparse_req(&req, None).is_none());
             },
         )
     }
@@ -234,7 +239,7 @@ mod tests {
         httparse_req(
             "GET //double/slashes HTTP/1.1\r\nHost: server.example.com:443\r\n",
             |req| {
-                let url = url_from_httparse_req(&req).unwrap();
+                let url = url_from_httparse_req(&req, None).unwrap();
                 assert_eq!(
                     url.as_str(),
                     "http://server.example.com:443//double/slashes"
@@ -247,7 +252,7 @@ mod tests {
         httparse_req(
             "GET ///triple/slashes HTTP/1.1\r\nHost: server.example.com:443\r\n",
             |req| {
-                let url = url_from_httparse_req(&req).unwrap();
+                let url = url_from_httparse_req(&req, None).unwrap();
                 assert_eq!(
                     url.as_str(),
                     "http://server.example.com:443///triple/slashes"
@@ -261,7 +266,7 @@ mod tests {
         httparse_req(
             "GET /foo?bar=1 HTTP/1.1\r\nHost: server.example.com:443\r\n",
             |req| {
-                let url = url_from_httparse_req(&req).unwrap();
+                let url = url_from_httparse_req(&req, None).unwrap();
                 assert_eq!(url.as_str(), "http://server.example.com:443/foo?bar=1");
             },
         )
@@ -272,7 +277,7 @@ mod tests {
         httparse_req(
             "GET /foo?bar=1#anchor HTTP/1.1\r\nHost: server.example.com:443\r\n",
             |req| {
-                let url = url_from_httparse_req(&req).unwrap();
+                let url = url_from_httparse_req(&req, None).unwrap();
                 assert_eq!(
                     url.as_str(),
                     "http://server.example.com:443/foo?bar=1#anchor"
