@@ -132,7 +132,6 @@ where
             .map(|connection| connection.as_str())
             .unwrap_or("");
 
-        let connection_header_is_upgrade = connection_header_as_str.split(',').any(|s| s.trim().eq_ignore_ascii_case("upgrade"));
         let connection_header_is_upgrade = connection_header_as_str
             .split(',')
             .any(|s| s.trim().eq_ignore_ascii_case("upgrade"));        
