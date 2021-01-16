@@ -134,7 +134,7 @@ where
 
         let connection_header_is_upgrade = connection_header_as_str
             .split(',')
-            .any(|s| s.trim().eq_ignore_ascii_case("upgrade"));        
+            .any(|s| s.trim().eq_ignore_ascii_case("upgrade"));
         let mut close_connection = connection_header_as_str.eq_ignore_ascii_case("close");
 
         let upgrade_requested = has_upgrade_header && connection_header_is_upgrade;
