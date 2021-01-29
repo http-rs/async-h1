@@ -67,6 +67,7 @@ mod server_decode {
             "llo",
             "0",
             "",
+            "",
         ])
         .await?
         .unwrap();
@@ -92,6 +93,7 @@ mod server_decode {
             "",
             "0",
             "x-invalid: å",
+            "",
             "",
         ])
         .await?

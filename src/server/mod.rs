@@ -1,17 +1,20 @@
 //! Process HTTP connections on the server.
 
 use async_std::future::{timeout, Future, TimeoutError};
-use async_std::io::{self, Read, Write};
+use async_std::io::{self, BufRead, BufReader, Read, Write};
 use http_types::headers::{CONNECTION, UPGRADE};
 use http_types::upgrade::Connection;
 use http_types::{Request, Response, StatusCode};
 use std::{marker::PhantomData, time::Duration};
-mod body_reader;
+
 mod decode;
 mod encode;
 
-pub use decode::decode;
+pub use decode::{decode, decode_rw};
 pub use encode::Encoder;
+
+use crate::sequenced::Sequenced;
+use crate::unite::Unite;
 
 /// Configure the server.
 #[derive(Debug, Clone)]
@@ -23,7 +26,7 @@ pub struct ServerOptions {
 impl Default for ServerOptions {
     fn default() -> Self {
         Self {
-            headers_timeout: Some(Duration::from_secs(60)),
+            headers_timeout: Some(Duration::from_secs(30)),
         }
     }
 }
@@ -58,8 +61,9 @@ where
 
 /// struct for server
 #[derive(Debug)]
-pub struct Server<RW, F, Fut> {
-    io: RW,
+pub struct Server<R, W, F, Fut> {
+    reader: Sequenced<R>,
+    writer: Sequenced<W>,
     endpoint: F,
     opts: ServerOptions,
     _phantom: PhantomData<Fut>,
@@ -75,16 +79,34 @@ pub enum ConnectionStatus {
     KeepAlive,
 }
 
-impl<RW, F, Fut> Server<RW, F, Fut>
+impl<RW, F, Fut> Server<BufReader<RW>, RW, F, Fut>
 where
-    RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
+    RW: Read + Write + Send + Sync + Clone + Unpin + 'static,
     F: Fn(Request) -> Fut,
     Fut: Future<Output = http_types::Result<Response>>,
 {
     /// builds a new server
     pub fn new(io: RW, endpoint: F) -> Self {
+        Self::new_rw(
+            Sequenced::new(BufReader::new(io.clone())),
+            Sequenced::new(io),
+            endpoint,
+        )
+    }
+}
+
+impl<R, W, F, Fut> Server<R, W, F, Fut>
+where
+    R: BufRead + Send + Sync + Unpin + 'static,
+    W: Write + Send + Sync + Unpin + 'static,
+    F: Fn(Request) -> Fut,
+    Fut: Future<Output = http_types::Result<Response>>,
+{
+    /// builds a new server
+    pub fn new_rw(reader: Sequenced<R>, writer: Sequenced<W>, endpoint: F) -> Self {
         Self {
-            io,
+            reader,
+            writer,
             endpoint,
             opts: Default::default(),
             _phantom: PhantomData,
@@ -104,16 +126,11 @@ where
     }
 
     /// accept one request
-    pub async fn accept_one(&mut self) -> http_types::Result<ConnectionStatus>
-    where
-        RW: Read + Write + Clone + Send + Sync + Unpin + 'static,
-        F: Fn(Request) -> Fut,
-        Fut: Future<Output = http_types::Result<Response>>,
-    {
+    pub async fn accept_one(&mut self) -> http_types::Result<ConnectionStatus> {
         // Decode a new request, timing out if this takes longer than the timeout duration.
-        let fut = decode(self.io.clone());
+        let fut = decode_rw(self.reader.split_seq(), self.writer.split_seq());
 
-        let (req, mut body) = if let Some(timeout_duration) = self.opts.headers_timeout {
+        let (req, notify_write) = if let Some(timeout_duration) = self.opts.headers_timeout {
             match timeout(timeout_duration, fut).await {
                 Ok(Ok(Some(r))) => r,
                 Ok(Ok(None)) | Err(TimeoutError { .. }) => return Ok(ConnectionStatus::Close), /* EOF or timeout */
@@ -159,17 +176,22 @@ where
 
         let mut encoder = Encoder::new(res, method);
 
-        let bytes_written = io::copy(&mut encoder, &mut self.io).await?;
+        // This should be dropped before we begin writing the response.
+        drop(notify_write);
+
+        let bytes_written = io::copy(&mut encoder, &mut self.writer).await?;
         log::trace!("wrote {} response bytes", bytes_written);
 
-        let body_bytes_discarded = io::copy(&mut body, &mut io::sink()).await?;
-        log::trace!(
-            "discarded {} unread request body bytes",
-            body_bytes_discarded
-        );
+        async_std::task::sleep(Duration::from_millis(1)).await;
 
         if let Some(upgrade_sender) = upgrade_sender {
-            upgrade_sender.send(Connection::new(self.io.clone())).await;
+            let reader = self.reader.take_inner().await;
+            let writer = self.writer.take_inner().await;
+            if let (Some(reader), Some(writer)) = (reader, writer) {
+                upgrade_sender
+                    .send(Connection::new(Unite::new(reader, writer)))
+                    .await;
+            }
             return Ok(ConnectionStatus::Close);
         } else if close_connection {
             Ok(ConnectionStatus::Close)

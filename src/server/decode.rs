@@ -2,17 +2,18 @@
 
 use std::str::FromStr;
 
-use async_dup::{Arc, Mutex};
-use async_std::io::{BufReader, Read, Write};
+use async_std::io::{self, BufRead, BufReader, Read, Write};
 use async_std::{prelude::*, task};
+use futures_channel::oneshot;
+use futures_util::{select_biased, FutureExt};
 use http_types::content::ContentLength;
 use http_types::headers::{EXPECT, TRANSFER_ENCODING};
 use http_types::{ensure, ensure_eq, format_err};
 use http_types::{Body, Method, Request, Url};
 
-use super::body_reader::BodyReader;
 use crate::chunked::ChunkedDecoder;
 use crate::read_notifier::ReadNotifier;
+use crate::sequenced::Sequenced;
 use crate::{MAX_HEADERS, MAX_HEAD_LENGTH};
 
 const LF: u8 = b'\n';
@@ -24,14 +25,63 @@ const CONTINUE_HEADER_VALUE: &str = "100-continue";
 const CONTINUE_RESPONSE: &[u8] = b"HTTP/1.1 100 Continue\r\n\r\n";
 
 /// Decode an HTTP request on the server.
-pub async fn decode<IO>(mut io: IO) -> http_types::Result<Option<(Request, BodyReader<IO>)>>
+pub async fn decode<IO>(io: IO) -> http_types::Result<Option<(Request, impl Future)>>
 where
     IO: Read + Write + Clone + Send + Sync + Unpin + 'static,
 {
-    let mut reader = BufReader::new(io.clone());
+    let mut reader = Sequenced::new(BufReader::new(io.clone()));
+    let mut writer = Sequenced::new(io);
+    let res = decode_rw(reader.split_seq(), writer.split_seq()).await?;
+    Ok(res.map(|(r, _)| {
+        (r, async move {
+            reader.take_inner().await;
+            writer.take_inner().await;
+        })
+    }))
+}
+
+async fn discard_unread_body<R1: Read + Unpin, R2>(
+    mut body_reader: Sequenced<R1>,
+    mut reader: Sequenced<R2>,
+) -> io::Result<()> {
+    // Unpoison the body reader, as we don't require it to be in any particular state
+    body_reader.cure();
+
+    // Consume the remainder of the request body
+    let body_bytes_discarded = io::copy(&mut body_reader, &mut io::sink()).await?;
+
+    log::trace!(
+        "discarded {} unread request body bytes",
+        body_bytes_discarded
+    );
+
+    // Unpoison the reader, as it's easier than trying to reach into the body reader to
+    // release the inner `Sequenced<T>`
+    reader.cure();
+    reader.release();
+
+    Ok(())
+}
+
+#[derive(Debug)]
+pub struct NotifyWrite {
+    sender: Option<oneshot::Sender<()>>,
+}
+
+/// Decode an HTTP request on the server.
+pub async fn decode_rw<R, W>(
+    mut reader: Sequenced<R>,
+    mut writer: Sequenced<W>,
+) -> http_types::Result<Option<(Request, NotifyWrite)>>
+where
+    R: BufRead + Send + Sync + Unpin + 'static,
+    W: Write + Send + Sync + Unpin + 'static,
+{
     let mut buf = Vec::new();
     let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
     let mut httparse_req = httparse::Request::new(&mut headers);
+
+    let mut notify_write = NotifyWrite { sender: None };
 
     // Keep reading bytes from the stream until we hit the end of the stream.
     loop {
@@ -103,12 +153,47 @@ where
     let (body_read_sender, body_read_receiver) = async_channel::bounded(1);
 
     if Some(CONTINUE_HEADER_VALUE) == req.header(EXPECT).map(|h| h.as_str()) {
+        // Prevent the response being written until we've decided whether to send
+        // the continue message or not.
+        let mut continue_writer = writer.split_seq();
+
+        // We can swap these later to effectively deactivate the body reader, in the event
+        // that we don't ask the client to send a body.
+        let mut continue_reader = reader.split_seq();
+        let mut after_reader = reader.split_seq_rev();
+
+        let (notify_tx, notify_rx) = oneshot::channel();
+        notify_write.sender = Some(notify_tx);
+
+        // If the client expects a 100-continue header, spawn a
+        // task to wait for the first read attempt on the body.
         task::spawn(async move {
-            // If the client expects a 100-continue header, spawn a
-            // task to wait for the first read attempt on the body.
-            if let Ok(()) = body_read_receiver.recv().await {
-                io.write_all(CONTINUE_RESPONSE).await.ok();
+            // It's important that we fuse this future, or else the `select` won't
+            // wake up properly if the sender is dropped.
+            let mut notify_rx = notify_rx.fuse();
+
+            let should_continue = select_biased! {
+                x = body_read_receiver.recv().fuse() => x.is_ok(),
+                _ = notify_rx => true,
             };
+
+            if should_continue {
+                if continue_writer.write_all(CONTINUE_RESPONSE).await.is_err() {
+                    return;
+                }
+            } else {
+                // We never asked for the body, so just allow the next
+                // request to continue from our current point in the stream.
+                continue_reader.swap(&mut after_reader);
+            }
+            // Allow the rest of the response to be written
+            continue_writer.release();
+
+            // Allow the body to be read
+            continue_reader.release();
+
+            // Allow the next request to be read (after the body, if requested, has been read)
+            after_reader.release();
             // Since the sender is moved into the Body, this task will
             // finish when the client disconnects, whether or not
             // 100-continue was sent.
@@ -121,23 +206,43 @@ where
         .unwrap_or(false)
     {
         let trailer_sender = req.send_trailers();
-        let reader = ChunkedDecoder::new(reader, trailer_sender);
-        let reader = Arc::new(Mutex::new(reader));
-        let reader_clone = reader.clone();
-        let reader = ReadNotifier::new(reader, body_read_sender);
-        let reader = BufReader::new(reader);
-        req.set_body(Body::from_reader(reader, None));
-        return Ok(Some((req, BodyReader::Chunked(reader_clone))));
+        let mut body_reader =
+            Sequenced::new(ChunkedDecoder::new(reader.split_seq(), trailer_sender));
+        req.set_body(Body::from_reader(
+            ReadNotifier::new(body_reader.split_seq(), body_read_sender),
+            None,
+        ));
+        let reader_to_cure = reader.split_seq();
+
+        // Spawn a task to consume any part of the body which is unread
+        task::spawn(async move {
+            let _ = discard_unread_body(body_reader, reader_to_cure).await;
+        });
+
+        reader.release();
+        writer.release();
+        return Ok(Some((req, notify_write)));
     } else if let Some(len) = content_length {
         let len = len.len();
-        let reader = Arc::new(Mutex::new(reader.take(len)));
+        let mut body_reader = Sequenced::new(reader.split_seq().take(len));
         req.set_body(Body::from_reader(
-            BufReader::new(ReadNotifier::new(reader.clone(), body_read_sender)),
+            ReadNotifier::new(body_reader.split_seq(), body_read_sender),
             Some(len as usize),
         ));
-        Ok(Some((req, BodyReader::Fixed(reader))))
+        let reader_to_cure = reader.split_seq();
+
+        // Spawn a task to consume any part of the body which is unread
+        task::spawn(async move {
+            let _ = discard_unread_body(body_reader, reader_to_cure).await;
+        });
+
+        reader.release();
+        writer.release();
+        Ok(Some((req, notify_write)))
     } else {
-        Ok(Some((req, BodyReader::None)))
+        reader.release();
+        writer.release();
+        Ok(Some((req, notify_write)))
     }
 }
 

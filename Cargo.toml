@@ -11,7 +11,7 @@ categories = [
   "parser-implementations",
   "web-programming",
   "web-programming::http-client",
-  "web-programming::http-server"
+  "web-programming::http-server",
 ]
 authors = ["Yoshua Wuyts <yoshuawuyts@gmail.com>"]
 readme = "README.md"
@@ -28,6 +28,10 @@ log = "0.4.11"
 pin-project = "1.0.2"
 async-channel = "1.5.1"
 async-dup = "1.2.2"
+futures-channel = "0.3.12"
+futures-io = "0.3.12"
+futures-lite = "1.11.3"
+futures-util = "0.3.12"
 
 [dev-dependencies]
 pretty_assertions = "0.6.1"

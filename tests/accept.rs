@@ -17,12 +17,42 @@ mod accept {
         let content_length = 10;
 
         let request_str = format!(
-            "POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: {}\r\n\r\n{}\r\n\r\n",
+            "POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: {}\r\n\r\n{}",
             content_length,
             std::str::from_utf8(&vec![b'|'; content_length]).unwrap()
         );
 
         server.write_all(request_str.as_bytes()).await?;
+        assert_eq!(server.accept_one().await?, ConnectionStatus::KeepAlive);
+
+        server.close();
+        assert_eq!(server.accept_one().await?, ConnectionStatus::Close);
+
+        assert!(server.all_read());
+
+        Ok(())
+    }
+
+    #[async_std::test]
+    async fn pipelined() -> Result<()> {
+        let mut server = TestServer::new(|req| async {
+            let mut response = Response::new(200);
+            let len = req.len();
+            response.set_body(Body::from_reader(req, len));
+            Ok(response)
+        });
+
+        let content_length = 10;
+
+        let request_str = format!(
+            "POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: {}\r\n\r\n{}",
+            content_length,
+            std::str::from_utf8(&vec![b'|'; content_length]).unwrap()
+        );
+
+        server.write_all(request_str.as_bytes()).await?;
+        server.write_all(request_str.as_bytes()).await?;
+        assert_eq!(server.accept_one().await?, ConnectionStatus::KeepAlive);
         assert_eq!(server.accept_one().await?, ConnectionStatus::KeepAlive);
 
         server.close();
@@ -74,7 +104,7 @@ mod accept {
         let content_length = 10;
 
         let request_str = format!(
-            "POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: {}\r\n\r\n{}\r\n\r\n",
+            "POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: {}\r\n\r\n{}",
             content_length,
             std::str::from_utf8(&vec![b'|'; content_length]).unwrap()
         );
@@ -130,7 +160,7 @@ mod accept {
         let content_length = 10000;
 
         let request_str = format!(
-            "POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: {}\r\n\r\n{}\r\n\r\n",
+            "POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: {}\r\n\r\n{}",
             content_length,
             std::str::from_utf8(&vec![b'|'; content_length]).unwrap()
         );
@@ -169,6 +199,33 @@ mod accept {
                 "GET / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 0\r\n\r\n"
             ))
             .await?;
+        server.close();
+        assert_eq!(server.accept_one().await?, ConnectionStatus::KeepAlive);
+
+        assert_eq!(server.accept_one().await?, ConnectionStatus::Close);
+
+        assert!(server.all_read());
+
+        Ok(())
+    }
+
+    #[async_std::test]
+    async fn echo_server() -> Result<()> {
+        let mut server = TestServer::new(|mut req| async move {
+            let mut resp = Response::new(200);
+            resp.set_body(req.take_body());
+            Ok(resp)
+        });
+
+        let content_length = 10;
+
+        let request_str = format!(
+            "POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: {}\r\n\r\n{}",
+            content_length,
+            std::str::from_utf8(&vec![b'|'; content_length]).unwrap()
+        );
+
+        server.write_all(request_str.as_bytes()).await?;
         assert_eq!(server.accept_one().await?, ConnectionStatus::KeepAlive);
 
         server.close();
