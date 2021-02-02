@@ -162,6 +162,8 @@ where
         let bytes_written = io::copy(&mut encoder, &mut self.io).await?;
         log::trace!("wrote {} response bytes", bytes_written);
 
+        async_std::task::sleep(Duration::from_millis(1)).await;
+
         let body_bytes_discarded = io::copy(&mut body, &mut io::sink()).await?;
         log::trace!(
             "discarded {} unread request body bytes",
