@@ -76,14 +76,14 @@ async fn server_chunked_large() -> Result<()> {
     let (mut client, server) = TestIO::new();
     async_std::io::copy(&mut client::Encoder::new(request), &mut client).await?;
 
-    let (request, _) = server::decode(server).await?.unwrap();
+    let (request, _) = server::decode(server, &Default::default()).await?.unwrap();
 
     let mut response = Response::new(200);
     response.set_body(Body::from_reader(request, None));
 
     let response_encoder = server::Encoder::new(response, Method::Get);
 
-    let mut response = client::decode(response_encoder).await?;
+    let mut response = client::decode(response_encoder).await?.unwrap();
 
     assert_eq!(response.body_string().await?, BODY);
     Ok(())

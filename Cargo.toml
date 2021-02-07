@@ -28,6 +28,7 @@ log = "0.4.11"
 pin-project = "1.0.2"
 async-channel = "1.5.1"
 async-dup = "1.2.2"
+thiserror = "1.0.22"
 
 [dev-dependencies]
 pretty_assertions = "0.6.1"

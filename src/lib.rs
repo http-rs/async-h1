@@ -81,7 +81,7 @@
 //!         let mut res = Response::new(StatusCode::Ok);
 //!         res.insert_header("Content-Type", "text/plain");
 //!         res.set_body("Hello");
-//!         Ok(res)
+//!         res
 //!     })
 //!     .await?;
 //!     Ok(())
@@ -116,6 +116,8 @@ use async_std::io::Cursor;
 use body_encoder::BodyEncoder;
 pub use client::connect;
 pub use server::{accept, accept_with_opts, ServerOptions};
+mod error;
+pub use error::{Error, Result};
 
 #[derive(Debug)]
 pub(crate) enum EncoderState {
