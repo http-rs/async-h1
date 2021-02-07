@@ -80,7 +80,7 @@ where
     if let Some(encoding) = transfer_encoding {
         if encoding.last().as_str() == "chunked" {
             let trailers_sender = res.send_trailers();
-            let reader = BufReader::new(ChunkedDecoder::new(reader, trailers_sender));
+            let reader = ChunkedDecoder::new(reader, trailers_sender);
             res.set_body(Body::from_reader(reader, None));
 
             // Return the response.

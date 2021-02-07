@@ -2,7 +2,7 @@ use async_h1::{
     client::Encoder,
     server::{ConnectionStatus, Server},
 };
-use async_std::io::{Read, Write};
+use async_std::io::{BufReader, Read, Write};
 use http_types::{Request, Response, Result};
 use std::{
     fmt::{Debug, Display},
@@ -17,9 +17,9 @@ use async_dup::Arc;
 
 #[pin_project::pin_project]
 pub struct TestServer<F, Fut> {
-    server: Server<TestIO, F, Fut>,
+    server: Server<BufReader<TestIO>, TestIO, F, Fut>,
     #[pin]
-    client: TestIO,
+    pub(crate) client: TestIO,
 }
 
 impl<F, Fut> TestServer<F, Fut>

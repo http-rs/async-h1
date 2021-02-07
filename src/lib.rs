@@ -108,6 +108,8 @@ mod body_encoder;
 mod chunked;
 mod date;
 mod read_notifier;
+mod sequenced;
+mod unite;
 
 pub mod client;
 pub mod server;
@@ -115,6 +117,7 @@ pub mod server;
 use async_std::io::Cursor;
 use body_encoder::BodyEncoder;
 pub use client::connect;
+pub use sequenced::Sequenced;
 pub use server::{accept, accept_with_opts, ServerOptions};
 
 #[derive(Debug)]
