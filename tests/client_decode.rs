@@ -1,4 +1,9 @@
+mod test_utils;
+
 mod client_decode {
+    use std::io::Write;
+
+    use super::test_utils::CloseableCursor;
     use async_h1::client;
     use async_std::io::Cursor;
     use http_types::headers;
@@ -38,6 +43,26 @@ mod client_decode {
         ])
         .await?;
         assert_eq!(res.header(&headers::SET_COOKIE).unwrap().iter().count(), 2);
+
+        Ok(())
+    }
+
+    #[async_std::test]
+    async fn connection_closure() -> Result<()> {
+        let mut cursor = CloseableCursor::default();
+        cursor.write_all(b"HTTP/1.1 200 OK\r\nhost: example.com")?;
+        cursor.close();
+        assert_eq!(
+            client::decode(cursor).await.unwrap_err().to_string(),
+            "empty response"
+        );
+
+        let cursor = CloseableCursor::default();
+        cursor.close();
+        assert_eq!(
+            client::decode(cursor).await.unwrap_err().to_string(),
+            "connection closed"
+        );
 
         Ok(())
     }

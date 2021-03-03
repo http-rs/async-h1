@@ -29,7 +29,12 @@ where
     loop {
         let bytes_read = reader.read_until(LF, &mut buf).await?;
         // No more bytes are yielded from the stream.
-        assert!(bytes_read != 0, "Empty response"); // TODO: ensure?
+
+        match (bytes_read, buf.len()) {
+            (0, 0) => return Err(format_err!("connection closed")),
+            (0, _) => return Err(format_err!("empty response")),
+            _ => {}
+        }
 
         // Prevent CWE-400 DDOS with large HTTP Headers.
         ensure!(
