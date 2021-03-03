@@ -2,7 +2,7 @@ use async_h1::{
     client::Encoder,
     server::{ConnectionStatus, Server},
 };
-use async_std::io::{Read, Write};
+use async_std::io::{Read as AsyncRead, Write as AsyncWrite};
 use http_types::{Request, Response, Result};
 use std::{
     fmt::{Debug, Display},
@@ -58,7 +58,7 @@ where
     }
 }
 
-impl<F, Fut> Read for TestServer<F, Fut>
+impl<F, Fut> AsyncRead for TestServer<F, Fut>
 where
     F: Fn(Request) -> Fut,
     Fut: Future<Output = Result<Response>>,
@@ -72,7 +72,7 @@ where
     }
 }
 
-impl<F, Fut> Write for TestServer<F, Fut>
+impl<F, Fut> AsyncWrite for TestServer<F, Fut>
 where
     F: Fn(Request) -> Fut,
     Fut: Future<Output = Result<Response>>,
@@ -187,7 +187,17 @@ impl Debug for CloseableCursor {
     }
 }
 
-impl Read for &CloseableCursor {
+impl AsyncRead for CloseableCursor {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut &*self).poll_read(cx, buf)
+    }
+}
+
+impl AsyncRead for &CloseableCursor {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -209,7 +219,7 @@ impl Read for &CloseableCursor {
     }
 }
 
-impl Write for &CloseableCursor {
+impl AsyncWrite for &CloseableCursor {
     fn poll_write(
         self: Pin<&mut Self>,
         _cx: &mut Context<'_>,
@@ -237,7 +247,7 @@ impl Write for &CloseableCursor {
     }
 }
 
-impl Read for TestIO {
+impl AsyncRead for TestIO {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -247,7 +257,7 @@ impl Read for TestIO {
     }
 }
 
-impl Write for TestIO {
+impl AsyncWrite for TestIO {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -262,5 +272,15 @@ impl Write for TestIO {
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut &*self.write).poll_close(cx)
+    }
+}
+
+impl std::io::Write for CloseableCursor {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.write().unwrap().data.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
