@@ -170,7 +170,7 @@ where
 
         if let Some(upgrade_sender) = upgrade_sender {
             upgrade_sender.send(Connection::new(self.io.clone())).await;
-            return Ok(ConnectionStatus::Close);
+            Ok(ConnectionStatus::Close)
         } else if close_connection {
             Ok(ConnectionStatus::Close)
         } else {
