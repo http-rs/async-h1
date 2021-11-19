@@ -593,4 +593,26 @@ mod tests {
             assert_eq!(trailers["Expires"], "Wed, 21 Oct 2015 07:28:00 GMT");
         });
     }
+
+    #[test]
+    fn test_ff7() {
+        async_std::task::block_on(async move {
+            let mut input: Vec<u8> = b"FF7\r\n".to_vec();
+            input.extend(vec![b'X'; 0xFF7]);
+            input.extend(b"\r\n4\r\n");
+            input.extend(vec![b'Y'; 4]);
+            input.extend(b"\r\n0\r\n\r\n");
+
+            let (s, _r) = async_channel::bounded(1);
+            let sender = Sender::new(s);
+            let mut decoder = ChunkedDecoder::new(async_std::io::Cursor::new(input), sender);
+
+            let mut output = String::new();
+            decoder.read_to_string(&mut output).await.unwrap();
+            assert_eq!(
+                output,
+                "X".to_string().repeat(0xFF7) + &"Y".to_string().repeat(4)
+            );
+        });
+    }
 }
