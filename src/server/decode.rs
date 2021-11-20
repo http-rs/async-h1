@@ -127,7 +127,7 @@ where
         let reader = ReadNotifier::new(reader, body_read_sender);
         let reader = BufReader::new(reader);
         req.set_body(Body::from_reader(reader, None));
-        return Ok(Some((req, BodyReader::Chunked(reader_clone))));
+        Ok(Some((req, BodyReader::Chunked(reader_clone))))
     } else if let Some(len) = content_length {
         let len = len.len();
         let reader = Arc::new(Mutex::new(reader.take(len)));
