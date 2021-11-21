@@ -26,7 +26,7 @@ mod client_decode {
         ])
         .await?;
 
-        assert_eq!(res.header(&headers::DATE).is_some(), true);
+        assert!(res.header(&headers::DATE).is_some());
         Ok(())
     }
 
