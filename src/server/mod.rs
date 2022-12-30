@@ -1,7 +1,7 @@
 //! Process HTTP connections on the server.
 
 use async_std::future::{timeout, Future, TimeoutError};
-use async_std::io::{self, Read, Write};
+use async_std::io::{self, Read, Write, BufWriter, WriteExt};
 use http_types::headers::{CONNECTION, UPGRADE};
 use http_types::upgrade::Connection;
 use http_types::{Request, Response, StatusCode};
@@ -159,7 +159,9 @@ where
 
         let mut encoder = Encoder::new(res, method);
 
-        let bytes_written = io::copy(&mut encoder, &mut self.io).await?;
+        let mut stream = BufWriter::new(&mut self.io);
+        let bytes_written = io::copy(&mut encoder, &mut stream).await?;
+        stream.flush().await?;
         log::trace!("wrote {} response bytes", bytes_written);
 
         let body_bytes_discarded = io::copy(&mut body, &mut io::sink()).await?;
