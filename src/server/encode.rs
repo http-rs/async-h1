@@ -2,10 +2,10 @@
 
 use std::io::Write;
 use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::SystemTime;
 
-use async_std::io::{self, Cursor, Read};
-use async_std::task::{Context, Poll};
+use futures_lite::io::{self, AsyncRead as Read, Cursor};
 use http_types::headers::{CONTENT_LENGTH, DATE, TRANSFER_ENCODING};
 use http_types::{Method, Response};
 

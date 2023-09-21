@@ -1,9 +1,8 @@
 use std::pin::Pin;
+use std::task::{Context, Poll};
 
-use async_std::io;
-use async_std::io::prelude::*;
-use async_std::task::{Context, Poll};
-use futures_core::ready;
+use futures_lite::io::AsyncRead as Read;
+use futures_lite::{io, ready};
 
 /// An encoder for chunked encoding.
 #[derive(Debug)]

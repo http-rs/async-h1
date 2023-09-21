@@ -3,8 +3,9 @@
 use std::str::FromStr;
 
 use async_dup::{Arc, Mutex};
-use async_std::io::{BufReader, Read, Write};
-use async_std::{prelude::*, task};
+use async_std::task;
+use futures_lite::io::{AsyncRead as Read, AsyncWrite as Write, BufReader};
+use futures_lite::prelude::*;
 use http_types::content::ContentLength;
 use http_types::headers::{EXPECT, TRANSFER_ENCODING};
 use http_types::{ensure, ensure_eq, format_err};
