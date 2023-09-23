@@ -222,7 +222,7 @@ impl<R: Read + Unpin> Read for ChunkedDecoder<R> {
                     }
                 }
                 State::TrailerSending(ref mut fut) => {
-                    let _ = ready!(Pin::new(fut).poll(cx));
+                    ready!(Pin::new(fut).poll(cx));
                     this.state = State::Done;
                 }
                 State::Done => return Poll::Ready(Ok(0)),
