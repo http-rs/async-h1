@@ -19,7 +19,7 @@ use async_dup::Arc;
 pub struct TestServer<F, Fut> {
     server: Server<TestIO, F, Fut>,
     #[pin]
-    client: TestIO,
+    pub(crate) client: TestIO,
 }
 
 impl<F, Fut> TestServer<F, Fut>
