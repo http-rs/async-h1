@@ -80,6 +80,8 @@ where
     req.set_version(Some(http_types::Version::Http1_1));
 
     for header in httparse_req.headers.iter() {
+        // https://tools.ietf.org/html/rfc822#section-3.1
+        http_types::ensure_status!(header.value.is_ascii(), 400, "None ascii header");
         req.append_header(header.name, std::str::from_utf8(header.value)?);
     }
 

@@ -2,10 +2,10 @@ mod test_utils;
 mod server_decode {
     use super::test_utils::TestIO;
     use async_std::io::prelude::*;
-    use http_types::headers::TRANSFER_ENCODING;
     use http_types::Request;
     use http_types::Result;
     use http_types::Url;
+    use http_types::{headers::TRANSFER_ENCODING, StatusCode};
     use pretty_assertions::assert_eq;
 
     async fn decode_lines(lines: Vec<&str>) -> Result<Option<Request>> {
@@ -124,5 +124,36 @@ mod server_decode {
         assert_eq!(string, "not 11");
 
         Ok(())
+    }
+
+    #[async_std::test]
+    async fn none_utf8_header() {
+        let s = vec![
+            b"GET / HTTP/1.1" as &[u8],
+            b"host: localhost:8080",
+            b"none-utf8-header: \xc3\x28",
+            b"",
+            b"",
+        ]
+        .join(b"\r\n" as &[u8]);
+        let (mut client, server) = TestIO::new();
+        client.write_all(&s).await.unwrap();
+        client.close();
+        let err = async_h1::server::decode(server).await.unwrap_err();
+        assert_eq!(err.status(), StatusCode::BadRequest);
+    }
+
+    #[async_std::test]
+    async fn none_ascii_header() {
+        let err = decode_lines(vec![
+            "GET / HTTP/1.1",
+            "host: localhost:8080",
+            "none-ascii-header: élo",
+            "",
+            "",
+        ])
+        .await
+        .unwrap_err();
+        assert_eq!(err.status(), StatusCode::BadRequest);
     }
 }
