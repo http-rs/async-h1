@@ -1,5 +1,5 @@
-use async_std::io::{BufReader, Read};
-use async_std::prelude::*;
+use futures_lite::io::{AsyncRead as Read, BufReader};
+use futures_lite::prelude::*;
 use http_types::{ensure, ensure_eq, format_err};
 use http_types::{
     headers::{CONTENT_LENGTH, DATE, TRANSFER_ENCODING},

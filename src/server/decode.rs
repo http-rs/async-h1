@@ -3,8 +3,8 @@
 use std::str::FromStr;
 
 use async_dup::{Arc, Mutex};
-use async_std::io::{BufReader, Read, Write};
-use async_std::{prelude::*, task};
+use futures_lite::io::{AsyncRead as Read, AsyncWrite as Write, BufReader};
+use futures_lite::prelude::*;
 use http_types::content::ContentLength;
 use http_types::headers::{EXPECT, TRANSFER_ENCODING};
 use http_types::{ensure, ensure_eq, format_err};
@@ -103,7 +103,7 @@ where
     let (body_read_sender, body_read_receiver) = async_channel::bounded(1);
 
     if Some(CONTINUE_HEADER_VALUE) == req.header(EXPECT).map(|h| h.as_str()) {
-        task::spawn(async move {
+        async_global_executor::spawn(async move {
             // If the client expects a 100-continue header, spawn a
             // task to wait for the first read attempt on the body.
             if let Ok(()) = body_read_receiver.recv().await {
@@ -112,7 +112,8 @@ where
             // Since the sender is moved into the Body, this task will
             // finish when the client disconnects, whether or not
             // 100-continue was sent.
-        });
+        })
+        .detach();
     }
 
     // Check for Transfer-Encoding

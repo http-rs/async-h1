@@ -1,6 +1,6 @@
 //! Process HTTP connections on the client.
 
-use async_std::io::{self, Read, Write};
+use futures_lite::io::{self, AsyncRead as Read, AsyncWrite as Write};
 use http_types::{Request, Response};
 
 mod decode;

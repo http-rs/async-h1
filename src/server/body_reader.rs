@@ -1,8 +1,12 @@
 use crate::chunked::ChunkedDecoder;
 use async_dup::{Arc, Mutex};
-use async_std::io::{BufReader, Read, Take};
-use async_std::task::{Context, Poll};
-use std::{fmt::Debug, io, pin::Pin};
+use futures_lite::io::{AsyncRead as Read, BufReader, Take};
+use std::{
+    fmt::Debug,
+    io,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 pub enum BodyReader<IO: Read + Unpin> {
     Chunked(Arc<Mutex<ChunkedDecoder<BufReader<IO>>>>),

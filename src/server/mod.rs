@@ -1,11 +1,12 @@
 //! Process HTTP connections on the server.
 
-use async_std::future::{timeout, Future, TimeoutError};
-use async_std::io::{self, Read, Write};
+use async_io::Timer;
+use futures_lite::io::{self, AsyncRead as Read, AsyncWrite as Write};
+use futures_lite::prelude::*;
 use http_types::headers::{CONNECTION, UPGRADE};
 use http_types::upgrade::Connection;
 use http_types::{Request, Response, StatusCode};
-use std::{marker::PhantomData, time::Duration};
+use std::{future::Future, marker::PhantomData, time::Duration};
 mod body_reader;
 mod decode;
 mod encode;
@@ -114,10 +115,16 @@ where
         let fut = decode(self.io.clone());
 
         let (req, mut body) = if let Some(timeout_duration) = self.opts.headers_timeout {
-            match timeout(timeout_duration, fut).await {
-                Ok(Ok(Some(r))) => r,
-                Ok(Ok(None)) | Err(TimeoutError { .. }) => return Ok(ConnectionStatus::Close), /* EOF or timeout */
-                Ok(Err(e)) => return Err(e),
+            match fut
+                .or(async {
+                    Timer::after(timeout_duration).await;
+                    Ok(None)
+                })
+                .await
+            {
+                Ok(Some(r)) => r,
+                Ok(None) => return Ok(ConnectionStatus::Close), /* EOF or timeout */
+                Err(e) => return Err(e),
             }
         } else {
             match fut.await? {

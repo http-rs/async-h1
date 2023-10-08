@@ -112,9 +112,9 @@ mod read_notifier;
 pub mod client;
 pub mod server;
 
-use async_std::io::Cursor;
 use body_encoder::BodyEncoder;
 pub use client::connect;
+use futures_lite::io::Cursor;
 pub use server::{accept, accept_with_opts, ServerOptions};
 
 #[derive(Debug)]
